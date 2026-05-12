@@ -20,6 +20,12 @@ body {
 #tenantSelect { background:#243240;color:#e7e9ea;border:1px solid #2f4150;border-radius:6px;padding:6px 8px;font-size:13px;max-width:240px; }
 .badge { font-size:11px;color:#1d9bf0;padding:2px 8px;border:1px solid #1d9bf0;border-radius:10px; }
 .badge:empty { display:none; }
+
+/* Modo embed (iframe en GHL) */
+body.embed .brand { display:none; }
+body.embed #tenantSelect { display:none; }
+body.embed #ghlBadge { display:none; }
+body.embed .topbar { padding:8px 16px; }
 .status {
   flex: 1;
   font-size: 13px;

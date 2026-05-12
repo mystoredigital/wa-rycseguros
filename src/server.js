@@ -1,4 +1,5 @@
 import express from 'express';
+import cookieParser from 'cookie-parser';
 import http from 'node:http';
 import { Server as IOServer } from 'socket.io';
 import path from 'node:path';
@@ -7,10 +8,33 @@ import { buildAuthorizeUrl, exchangeCode, listLocations, getLocationToken } from
 import { saveAgencyTokens, getFreshAgencyToken } from './ghl/agencies.js';
 import { phoneToJid } from './ghl/phone.js';
 import { GHLClient } from './ghl/client.js';
+import { decryptGhlPayload, signSession, verifySession } from './ghl/sso.js';
 
-function basicAuth(req, res, next) {
-  // No autenticar rutas públicas necesarias para el flujo GHL
-  if (req.path.startsWith('/oauth/') || req.path.startsWith('/webhooks/')) return next();
+const EMBED_COOKIE = 'embed_session';
+const SESSION_TTL = 60 * 60 * 12; // 12h
+
+function authMiddleware(req, res, next) {
+  // Rutas siempre públicas (las requiere GHL o son endpoints de salud)
+  if (
+    req.path.startsWith('/oauth/') ||
+    req.path.startsWith('/webhooks/') ||
+    req.path === '/embed' ||
+    req.path === '/embed.html' ||
+    req.path === '/api/embed/sso' ||
+    req.path === '/api/health'
+  ) return next();
+
+  // 1) Embed session cookie (válido y firmado)
+  const cookie = req.cookies?.[EMBED_COOKIE];
+  if (cookie) {
+    const locationId = verifySession(cookie, process.env.GHL_SHARED_SECRET || 'dev');
+    if (locationId) {
+      req.embedLocationId = locationId;
+      return next();
+    }
+  }
+
+  // 2) Basic auth
   const user = process.env.DASHBOARD_USER;
   const pass = process.env.DASHBOARD_PASS;
   if (!user || !pass) return next();
@@ -25,6 +49,12 @@ function basicAuth(req, res, next) {
 }
 
 function getTenant(req) {
+  // Cuando viene una embed session, el tenant queda fijado por la cookie y no se puede sobrescribir
+  if (req.embedLocationId) {
+    const t = tenants.get(req.embedLocationId);
+    if (!t) throw Object.assign(new Error(`Tenant ${req.embedLocationId} no existe`), { status: 404 });
+    return t;
+  }
   const id = req.query.tenant || req.body?.tenant || '_local';
   const t = tenants.get(id);
   if (!t) throw Object.assign(new Error(`Tenant ${id} no existe`), { status: 404 });
@@ -100,10 +130,14 @@ const GHL_SCOPES = [
 
 export function startServer(port = 3000) {
   const app = express();
-  app.use(basicAuth);
+  app.use(cookieParser());
   app.use(express.json({ limit: '1mb' }));
   app.use(express.urlencoded({ extended: true }));
+  app.use(authMiddleware);
   app.use(express.static(path.resolve('./public')));
+
+  // Servir /embed sin extensión
+  app.get('/embed', (_req, res) => res.sendFile(path.resolve('./public/embed.html')));
 
   app.get('/api/health', (_req, res) => res.json({ ok: true, tenants: tenants.list().length }));
 
@@ -142,6 +176,32 @@ export function startServer(port = 3000) {
       await session.send(jid, text);
       res.json({ ok: true });
     } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  });
+
+  // --- GHL Embed SSO ---
+  app.post('/api/embed/sso', async (req, res) => {
+    try {
+      const { encryptedData } = req.body || {};
+      if (!encryptedData) return res.status(400).json({ error: 'encryptedData requerido' });
+      const data = decryptGhlPayload(encryptedData, process.env.GHL_SHARED_SECRET);
+      // data esperado: { userId, companyId, activeLocation, role, type, email, ... }
+      const locationId = data.activeLocation || data.locationId;
+      if (!locationId) return res.status(400).json({ error: 'Payload sin activeLocation', payload: data });
+      const tenant = tenants.get(locationId);
+      if (!tenant) return res.status(404).json({ error: `Tenant ${locationId} no existe (instalar app primero)` });
+
+      const signed = signSession(locationId, process.env.GHL_SHARED_SECRET);
+      res.cookie(EMBED_COOKIE, signed, {
+        httpOnly: true,
+        secure: true,
+        sameSite: 'none', // permite cargar desde iframe en GHL
+        maxAge: SESSION_TTL * 1000,
+      });
+      res.json({ locationId, userId: data.userId, role: data.role, email: data.email });
+    } catch (e) {
+      console.error('[embed sso]', e.message);
+      res.status(500).json({ error: e.message });
+    }
   });
 
   // --- GHL OAuth ---

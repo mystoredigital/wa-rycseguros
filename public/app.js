@@ -1,6 +1,9 @@
 const socket = io();
 
 const params = new URLSearchParams(location.search);
+const EMBED = params.get('embed') === '1';
+if (EMBED) document.body.classList.add('embed');
+
 const state = {
   tenantId: params.get('tenant') || '_local',
   tenants: [],
