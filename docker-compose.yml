@@ -11,6 +11,19 @@ services:
     volumes:
       - ../files/data:/app/data
       - ../files/credentials:/app/credentials
+    environment:
+      PORT: ${PORT}
+      DASHBOARD_USER: ${DASHBOARD_USER}
+      DASHBOARD_PASS: ${DASHBOARD_PASS}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL}
+      OPENROUTER_SITE_URL: ${OPENROUTER_SITE_URL}
+      OPENROUTER_SITE_NAME: ${OPENROUTER_SITE_NAME}
+      GOOGLE_SERVICE_ACCOUNT_FILE: ${GOOGLE_SERVICE_ACCOUNT_FILE}
+      GOOGLE_CALENDAR_ID: ${GOOGLE_CALENDAR_ID}
+      TIMEZONE: ${TIMEZONE}
+      BUSINESS_NAME: ${BUSINESS_NAME}
+      BUSINESS_DESCRIPTION: ${BUSINESS_DESCRIPTION}
     labels:
       - traefik.enable=true
       - traefik.http.routers.whatsapp-agent-mystore.entrypoints=websecure
