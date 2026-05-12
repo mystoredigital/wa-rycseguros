@@ -44,6 +44,41 @@ export async function refreshToken({ refreshToken, clientId, clientSecret, userT
   return normalize(data);
 }
 
+// Lista sub-accounts (locations) de una agencia
+export async function listLocations({ accessToken, companyId, limit = 100, skip = 0 }) {
+  const u = new URL('https://services.leadconnectorhq.com/locations/search');
+  u.searchParams.set('companyId', companyId);
+  u.searchParams.set('limit', String(limit));
+  u.searchParams.set('skip', String(skip));
+  const res = await fetch(u, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Version: '2021-07-28',
+      Accept: 'application/json',
+    },
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`GHL listLocations ${res.status}: ${text}`);
+  return JSON.parse(text);
+}
+
+// Deriva Location-token desde Agency-token
+export async function getLocationToken({ accessToken, companyId, locationId }) {
+  const res = await fetch('https://services.leadconnectorhq.com/oauth/locationToken', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Version: '2021-07-28',
+      'Content-Type': 'application/x-www-form-urlencoded',
+      Accept: 'application/json',
+    },
+    body: new URLSearchParams({ companyId, locationId }).toString(),
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`GHL locationToken ${res.status}: ${text}`);
+  return normalize(JSON.parse(text));
+}
+
 function normalize(d) {
   return {
     accessToken: d.access_token,

@@ -3,7 +3,8 @@ import http from 'node:http';
 import { Server as IOServer } from 'socket.io';
 import path from 'node:path';
 import { tenants } from './tenants.js';
-import { buildAuthorizeUrl, exchangeCode } from './ghl/oauth.js';
+import { buildAuthorizeUrl, exchangeCode, listLocations, getLocationToken } from './ghl/oauth.js';
+import { saveAgencyTokens, getFreshAgencyToken } from './ghl/agencies.js';
 
 function basicAuth(req, res, next) {
   // No autenticar rutas públicas necesarias para el flujo GHL
@@ -26,6 +27,63 @@ function getTenant(req) {
   const t = tenants.get(id);
   if (!t) throw Object.assign(new Error(`Tenant ${id} no existe`), { status: 404 });
   return t;
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function pageShell(title, body) {
+  return `<!doctype html><html lang="es"><head><meta charset="utf-8"><title>${escapeHtml(title)}</title>
+<style>
+body{font-family:-apple-system,system-ui,sans-serif;background:#0f1419;color:#e7e9ea;margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:40px 20px}
+.box{background:#16202a;padding:32px;border-radius:12px;max-width:640px;width:100%;border:1px solid #2a3744}
+.ok{color:#4caf50;font-size:48px;text-align:center}
+h2{margin:8px 0 24px;text-align:center}
+.row{display:flex;align-items:center;gap:12px;padding:12px;background:#1a2530;border-radius:8px;margin-bottom:8px}
+.row .info{flex:1}
+.row .name{font-weight:500}
+.row .id{font-size:12px;color:#8899a6;font-family:ui-monospace,Menlo,monospace}
+button{background:#1d9bf0;color:#fff;border:0;border-radius:6px;padding:8px 16px;cursor:pointer;font-size:13px}
+button:hover{background:#1a8cd8}
+button:disabled{opacity:0.4;cursor:not-allowed;background:#3a4d5e}
+a{color:#1d9bf0}
+.empty{text-align:center;color:#8899a6;padding:32px}
+</style></head><body><div class="box">${body}</div></body></html>`;
+}
+
+function successPage({ tenantId, companyId }) {
+  return pageShell('Instalación exitosa', `
+<div class="ok">✓</div>
+<h2>Conectado a GHL</h2>
+<p>Location ID: <code>${escapeHtml(tenantId)}</code></p>
+${companyId ? `<p>Agency: <code>${escapeHtml(companyId)}</code></p>` : ''}
+<p>Próximo paso: abre el dashboard, selecciona este tenant y escanea el QR de WhatsApp.</p>
+<p style="text-align:center;margin-top:24px"><a href="/?tenant=${encodeURIComponent(tenantId)}">Abrir dashboard →</a></p>`);
+}
+
+function selectLocationPage({ companyId, locations, connected }) {
+  const rows = locations.length
+    ? locations.map((l) => {
+        const isConn = connected.has(l.id);
+        return `<div class="row">
+          <div class="info">
+            <div class="name">${escapeHtml(l.name || '(sin nombre)')}</div>
+            <div class="id">${escapeHtml(l.id)}</div>
+          </div>
+          <form method="POST" action="/oauth/connect-location" style="margin:0">
+            <input type="hidden" name="companyId" value="${escapeHtml(companyId)}">
+            <input type="hidden" name="locationId" value="${escapeHtml(l.id)}">
+            <button type="submit" ${isConn ? 'disabled' : ''}>${isConn ? 'Conectada' : 'Conectar'}</button>
+          </form>
+        </div>`;
+      }).join('')
+    : '<div class="empty">No hay sub-accounts en esta agencia.</div>';
+  return pageShell('Elige una sub-account', `
+<h2>Elige la sub-account a conectar</h2>
+<p style="text-align:center;color:#8899a6">Agency: <code>${escapeHtml(companyId)}</code> · ${locations.length} sub-account(s)</p>
+${rows}
+<p style="text-align:center;margin-top:24px"><a href="/oauth/install">← Volver al install</a></p>`);
 }
 
 const GHL_SCOPES = [
@@ -106,30 +164,70 @@ export function startServer(port = 3000) {
         userType: 'Location',
       });
 
-      if (!tokens.locationId) {
-        return res.status(500).send(`Tokens recibidos pero sin locationId. userType=${tokens.userType}`);
+      // Caso A: token de Location directo → crear tenant
+      if (tokens.locationId) {
+        const tenantId = tokens.locationId;
+        let tenant = tenants.get(tenantId);
+        if (!tenant) tenant = await tenants.create(tenantId, { kind: 'ghl', companyId: tokens.companyId });
+        tenant.setGhlTokens(tokens);
+        console.log(`[oauth] tenant ${tenantId} instalado (company=${tokens.companyId})`);
+        return res.send(successPage({ tenantId, companyId: tokens.companyId }));
       }
 
-      const tenantId = tokens.locationId;
-      let tenant = tenants.get(tenantId);
-      if (!tenant) tenant = await tenants.create(tenantId, { kind: 'ghl', companyId: tokens.companyId });
-      tenant.setGhlTokens(tokens);
-      console.log(`[oauth] tenant ${tenantId} instalado (company=${tokens.companyId})`);
+      // Caso B: token de Company (instalación a nivel agencia) → guardar y mostrar selector
+      if (tokens.companyId) {
+        await saveAgencyTokens(tokens);
+        console.log(`[oauth] agency ${tokens.companyId} conectada — redirigiendo a selector`);
+        return res.redirect(`/oauth/select-location?companyId=${encodeURIComponent(tokens.companyId)}`);
+      }
 
-      res.send(`
-<!doctype html><html><head><title>Instalación exitosa</title>
-<style>body{font-family:system-ui;background:#0f1419;color:#e7e9ea;display:flex;align-items:center;justify-content:center;height:100vh;margin:0;text-align:center}
-.box{background:#16202a;padding:32px;border-radius:12px;max-width:420px}
-.ok{color:#4caf50;font-size:48px}</style></head>
-<body><div class="box">
-<div class="ok">✓</div>
-<h2>Conectado a GHL</h2>
-<p>Location ID: <code>${tenantId}</code></p>
-<p>Ya puedes cerrar esta ventana y abrir el dashboard para escanear el QR de WhatsApp.</p>
-<p><a href="/?tenant=${encodeURIComponent(tenantId)}" style="color:#1d9bf0">Abrir dashboard →</a></p>
-</div></body></html>`);
+      return res.status(500).send(`Tokens sin locationId ni companyId. userType=${tokens.userType}`);
     } catch (e) {
       console.error('[oauth callback]', e);
+      res.status(500).send(`Error: ${e.message}`);
+    }
+  });
+
+  // GET selector de location (cuando se instaló a nivel agencia)
+  app.get('/oauth/select-location', async (req, res) => {
+    try {
+      const companyId = String(req.query.companyId || '');
+      if (!companyId) return res.status(400).send('Falta companyId');
+      const agency = await getFreshAgencyToken(companyId);
+      const data = await listLocations({ accessToken: agency.accessToken, companyId });
+      const locs = data.locations || [];
+      const connected = new Set(
+        tenants.list().filter((t) => t.ghl && t.ghl.companyId === companyId).map((t) => t.tenantId)
+      );
+      res.send(selectLocationPage({ companyId, locations: locs, connected }));
+    } catch (e) {
+      console.error('[select-location]', e);
+      res.status(500).send(`Error: ${e.message}`);
+    }
+  });
+
+  // POST conectar una location → derivar location token + crear tenant
+  app.post('/oauth/connect-location', async (req, res) => {
+    try {
+      const { companyId, locationId } = req.body || {};
+      if (!companyId || !locationId) return res.status(400).send('companyId y locationId requeridos');
+      const agency = await getFreshAgencyToken(companyId);
+      const locTokens = await getLocationToken({
+        accessToken: agency.accessToken,
+        companyId,
+        locationId,
+      });
+      locTokens.locationId = locTokens.locationId || locationId;
+      locTokens.companyId = locTokens.companyId || companyId;
+
+      let tenant = tenants.get(locationId);
+      if (!tenant) tenant = await tenants.create(locationId, { kind: 'ghl', companyId });
+      tenant.setGhlTokens(locTokens);
+      console.log(`[oauth] tenant ${locationId} conectado desde agencia ${companyId}`);
+
+      res.send(successPage({ tenantId: locationId, companyId }));
+    } catch (e) {
+      console.error('[connect-location]', e);
       res.status(500).send(`Error: ${e.message}`);
     }
   });
