@@ -335,6 +335,11 @@ export function startServer(port = 3000) {
 
       session.markOutboundSent(messageId);
       await session.send(jid, message, { skipGhlMirror: true });
+      // Toma de control: si un humano respondió desde GHL, pausa la IA en este chat
+      if (tenant.getOrCreateConversation(jid).mode !== 'human') {
+        tenant.setMode(jid, 'human');
+        console.log(`[webhook outbound] modo humano activado para ${jid}`);
+      }
       console.log(`[webhook outbound] enviado a ${jid}`);
     } catch (e) {
       console.error('[webhook outbound] error post-ack:', e.message);
