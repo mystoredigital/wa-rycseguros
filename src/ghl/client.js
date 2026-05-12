@@ -64,10 +64,10 @@ export class GHLClient {
     return await this.createContact({ phone, name });
   }
 
-  async sendInboundMessage({ contactId, message, conversationProviderId, altId }) {
+  async sendInboundMessage({ contactId, message, conversationProviderId, altId, type = 'SMS' }) {
     return this._req('POST', '/conversations/messages/inbound', {
       json: {
-        type: 'SMS',
+        type,
         contactId,
         message,
         conversationProviderId,
