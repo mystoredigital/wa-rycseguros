@@ -1,15 +1,11 @@
 import 'dotenv/config';
-import { store } from './state.js';
+import { tenants } from './tenants.js';
 import { startServer } from './server.js';
-import { startWhatsApp } from './whatsapp.js';
 
 async function main() {
-  await store.load();
+  await tenants.bootstrap();
+  console.log('[boot] tenants cargados:', tenants.list().map((t) => t.tenantId).join(', '));
   startServer(Number(process.env.PORT) || 3000);
-  startWhatsApp().catch((e) => {
-    console.error('[wa] fallo al iniciar', e);
-    store.setConnection('error');
-  });
 }
 
 main().catch((e) => {

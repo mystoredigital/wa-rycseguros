@@ -24,6 +24,11 @@ services:
       TIMEZONE: ${TIMEZONE}
       BUSINESS_NAME: ${BUSINESS_NAME}
       BUSINESS_DESCRIPTION: ${BUSINESS_DESCRIPTION}
+      GHL_CLIENT_ID: ${GHL_CLIENT_ID}
+      GHL_CLIENT_SECRET: ${GHL_CLIENT_SECRET}
+      GHL_SHARED_SECRET: ${GHL_SHARED_SECRET}
+      GHL_CONVERSATION_PROVIDER_ID: ${GHL_CONVERSATION_PROVIDER_ID}
+      GHL_REDIRECT_URI: ${GHL_REDIRECT_URI}
     labels:
       - traefik.enable=true
       - traefik.http.routers.whatsapp-agent-mystore.entrypoints=websecure

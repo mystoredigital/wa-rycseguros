@@ -17,6 +17,9 @@ body {
   border-bottom: 1px solid #2a3744;
 }
 .brand { font-weight: 600; flex: 0 0 auto; }
+#tenantSelect { background:#243240;color:#e7e9ea;border:1px solid #2f4150;border-radius:6px;padding:6px 8px;font-size:13px;max-width:240px; }
+.badge { font-size:11px;color:#1d9bf0;padding:2px 8px;border:1px solid #1d9bf0;border-radius:10px; }
+.badge:empty { display:none; }
 .status {
   flex: 1;
   font-size: 13px;

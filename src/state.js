@@ -1,10 +1,9 @@
 import fs from 'node:fs/promises';
+import fsSync from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
 
-const DATA_DIR = path.resolve('./data');
-const CONV_FILE = path.join(DATA_DIR, 'conversations.json');
-const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
+export const DATA_ROOT = path.resolve('./data');
 
 const DEFAULT_PROMPT = `Eres el agente de WhatsApp de ${process.env.BUSINESS_NAME || 'My Store Digital'}.
 
@@ -21,46 +20,62 @@ REGLAS:
 - No inventes precios. Si preguntan, indica que un humano confirmará el detalle.
 - Zona horaria: ${process.env.TIMEZONE || 'America/Guayaquil'}.`;
 
-class Store extends EventEmitter {
-  constructor() {
+export class TenantStore extends EventEmitter {
+  constructor(tenantId, meta = {}) {
     super();
+    this.tenantId = tenantId;
+    this.dir = path.join(DATA_ROOT, tenantId);
+    this.authDir = path.join(this.dir, 'auth_baileys');
+    this.convFile = path.join(this.dir, 'conversations.json');
+    this.configFile = path.join(this.dir, 'config.json');
+    this.metaFile = path.join(this.dir, 'meta.json');
+    this.tokensFile = path.join(this.dir, 'tokens.json');
+
     this.conversations = new Map();
     this.config = { systemPrompt: DEFAULT_PROMPT };
     this.connection = { state: 'disconnected', qr: null };
+    this.meta = { tenantId, kind: meta.kind || 'local', ...meta };
+    this.ghl = null;
   }
 
   async load() {
-    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.mkdir(this.dir, { recursive: true });
     try {
-      const raw = await fs.readFile(CONV_FILE, 'utf8');
-      const obj = JSON.parse(raw);
-      for (const [jid, conv] of Object.entries(obj)) {
+      const raw = await fs.readFile(this.convFile, 'utf8');
+      for (const [jid, conv] of Object.entries(JSON.parse(raw))) {
         this.conversations.set(jid, conv);
       }
     } catch {}
     try {
-      const raw = await fs.readFile(CONFIG_FILE, 'utf8');
-      this.config = { ...this.config, ...JSON.parse(raw) };
+      this.config = { ...this.config, ...JSON.parse(await fs.readFile(this.configFile, 'utf8')) };
+    } catch {}
+    try {
+      this.meta = { ...this.meta, ...JSON.parse(await fs.readFile(this.metaFile, 'utf8')) };
+    } catch {}
+    try {
+      this.ghl = JSON.parse(await fs.readFile(this.tokensFile, 'utf8'));
     } catch {}
   }
 
   async persistConversations() {
-    const obj = Object.fromEntries(this.conversations);
-    await fs.writeFile(CONV_FILE, JSON.stringify(obj, null, 2));
+    await fs.writeFile(this.convFile, JSON.stringify(Object.fromEntries(this.conversations), null, 2));
   }
-
   async persistConfig() {
-    await fs.writeFile(CONFIG_FILE, JSON.stringify(this.config, null, 2));
+    await fs.writeFile(this.configFile, JSON.stringify(this.config, null, 2));
+  }
+  async persistMeta() {
+    await fs.writeFile(this.metaFile, JSON.stringify(this.meta, null, 2));
+  }
+  async persistTokens() {
+    if (!this.ghl) return;
+    await fs.writeFile(this.tokensFile, JSON.stringify(this.ghl, null, 2));
   }
 
   getOrCreateConversation(jid, name) {
     if (!this.conversations.has(jid)) {
       this.conversations.set(jid, {
-        jid,
-        name: name || jid.split('@')[0],
-        mode: 'ai',
-        messages: [],
-        updatedAt: Date.now(),
+        jid, name: name || jid.split('@')[0],
+        mode: 'ai', messages: [], updatedAt: Date.now(),
       });
     } else if (name && !this.conversations.get(jid).name) {
       this.conversations.get(jid).name = name;
@@ -70,16 +85,11 @@ class Store extends EventEmitter {
 
   addMessage(jid, msg, name) {
     const conv = this.getOrCreateConversation(jid, name);
-    conv.messages.push({
-      ...msg,
-      ts: msg.ts || Date.now(),
-    });
-    if (conv.messages.length > 200) {
-      conv.messages = conv.messages.slice(-200);
-    }
+    conv.messages.push({ ...msg, ts: msg.ts || Date.now() });
+    if (conv.messages.length > 200) conv.messages = conv.messages.slice(-200);
     conv.updatedAt = Date.now();
     this.persistConversations().catch(() => {});
-    this.emit('message', { jid, message: msg, conversation: conv });
+    this.emit('message', { tenantId: this.tenantId, jid, message: msg, conversation: conv });
     return conv;
   }
 
@@ -87,30 +97,52 @@ class Store extends EventEmitter {
     const conv = this.getOrCreateConversation(jid);
     conv.mode = mode === 'human' ? 'human' : 'ai';
     this.persistConversations().catch(() => {});
-    this.emit('mode', { jid, mode: conv.mode });
+    this.emit('mode', { tenantId: this.tenantId, jid, mode: conv.mode });
     return conv;
   }
 
   setPrompt(prompt) {
     this.config.systemPrompt = prompt;
     this.persistConfig().catch(() => {});
-    this.emit('config', this.config);
+    this.emit('config', { tenantId: this.tenantId, config: this.config });
   }
 
   setConnection(state, qr = null) {
     this.connection = { state, qr };
-    this.emit('connection', this.connection);
+    this.emit('connection', { tenantId: this.tenantId, connection: this.connection });
+  }
+
+  setGhlTokens(tokens) {
+    this.ghl = { ...(this.ghl || {}), ...tokens };
+    this.persistTokens().catch(() => {});
   }
 
   snapshot() {
     return {
-      conversations: Array.from(this.conversations.values()).sort(
-        (a, b) => b.updatedAt - a.updatedAt
-      ),
+      tenantId: this.tenantId,
+      meta: this.meta,
+      conversations: Array.from(this.conversations.values()).sort((a, b) => b.updatedAt - a.updatedAt),
       config: this.config,
       connection: this.connection,
+      ghl: this.ghl ? { locationId: this.ghl.locationId, companyId: this.ghl.companyId, hasToken: true } : null,
     };
   }
 }
 
-export const store = new Store();
+// Migra layout legacy (data/auth_baileys, data/conversations.json) a data/_local/
+export async function migrateLegacyIfNeeded() {
+  const legacyAuth = path.join(DATA_ROOT, 'auth_baileys');
+  const legacyConv = path.join(DATA_ROOT, 'conversations.json');
+  const legacyConfig = path.join(DATA_ROOT, 'config.json');
+  const localDir = path.join(DATA_ROOT, '_local');
+
+  if (!fsSync.existsSync(legacyAuth) && !fsSync.existsSync(legacyConv)) return false;
+  if (fsSync.existsSync(localDir)) return false;
+
+  await fs.mkdir(localDir, { recursive: true });
+  if (fsSync.existsSync(legacyAuth)) await fs.rename(legacyAuth, path.join(localDir, 'auth_baileys'));
+  if (fsSync.existsSync(legacyConv)) await fs.rename(legacyConv, path.join(localDir, 'conversations.json'));
+  if (fsSync.existsSync(legacyConfig)) await fs.rename(legacyConfig, path.join(localDir, 'config.json'));
+  console.log('[migration] data/ legacy → data/_local/');
+  return true;
+}

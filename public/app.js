@@ -1,17 +1,26 @@
 const socket = io();
 
+const params = new URLSearchParams(location.search);
 const state = {
+  tenantId: params.get('tenant') || '_local',
+  tenants: [],
   conversations: [],
   config: { systemPrompt: '' },
   connection: { state: 'disconnected', qr: null },
+  meta: null,
+  ghl: null,
   activeJid: null,
 };
 
 const $ = (id) => document.getElementById(id);
 
+function withTenant(path, params = {}) {
+  const p = new URLSearchParams({ tenant: state.tenantId, ...params });
+  return `${path}?${p}`;
+}
+
 function fmtTime(ts) {
-  const d = new Date(ts);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 }
 
 function renderConnection() {
@@ -35,6 +44,20 @@ function renderConnection() {
   }
 }
 
+function renderTenantBar() {
+  const sel = $('tenantSelect');
+  sel.innerHTML = '';
+  for (const t of state.tenants) {
+    const opt = document.createElement('option');
+    opt.value = t.tenantId;
+    const label = t.tenantId === '_local' ? 'Local (sin GHL)' : `${t.tenantId.slice(0, 12)}…  · GHL`;
+    opt.textContent = label;
+    if (t.tenantId === state.tenantId) opt.selected = true;
+    sel.appendChild(opt);
+  }
+  $('ghlBadge').textContent = state.ghl ? `🔗 GHL: ${state.ghl.locationId.slice(0, 8)}…` : '';
+}
+
 function renderChatList() {
   const list = $('chatList');
   list.innerHTML = '';
@@ -44,12 +67,11 @@ function renderChatList() {
     const last = conv.messages[conv.messages.length - 1];
     li.innerHTML = `
       <div class="name">${conv.name || conv.jid}</div>
-      <div class="preview">${last ? (last.text || '').slice(0, 60) : '(sin mensajes)'}</div>
+      <div class="preview">${last ? escapeHtml((last.text || '').slice(0, 60)) : '(sin mensajes)'}</div>
       <div class="meta">
         <span class="mode-badge ${conv.mode}">${conv.mode === 'ai' ? 'IA' : 'HUMANO'}</span>
         <span>${last ? fmtTime(last.ts) : ''}</span>
-      </div>
-    `;
+      </div>`;
     li.onclick = () => selectChat(conv.jid);
     list.appendChild(li);
   }
@@ -76,8 +98,7 @@ function renderMessages() {
 
   for (const m of conv.messages) {
     const div = document.createElement('div');
-    const cls = m.manual ? 'manual' : m.role;
-    div.className = `bubble ${cls}`;
+    div.className = `bubble ${m.manual ? 'manual' : m.role}`;
     div.innerHTML = `${escapeHtml(m.text)}<span class="time">${fmtTime(m.ts)}</span>`;
     wrap.appendChild(div);
   }
@@ -100,7 +121,7 @@ async function setMode(jid, mode) {
   await fetch('/api/mode', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jid, mode }),
+    body: JSON.stringify({ tenant: state.tenantId, jid, mode }),
   });
 }
 
@@ -111,24 +132,51 @@ async function sendManual() {
   await fetch('/api/send', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ jid: state.activeJid, text }),
+    body: JSON.stringify({ tenant: state.tenantId, jid: state.activeJid, text }),
   });
 }
 
 async function savePrompt() {
-  const systemPrompt = $('promptText').value;
   await fetch('/api/config', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ systemPrompt }),
+    body: JSON.stringify({ tenant: state.tenantId, systemPrompt: $('promptText').value }),
   });
   $('promptModal').classList.add('hidden');
 }
 
-$('modeToggle').addEventListener('change', (e) => {
-  if (!state.activeJid) return;
-  setMode(state.activeJid, e.target.checked ? 'human' : 'ai');
-});
+function switchTenant(newId) {
+  const url = new URL(location.href);
+  url.searchParams.set('tenant', newId);
+  location.href = url.toString();
+}
+
+async function loadTenants() {
+  const r = await fetch('/api/tenants');
+  const { tenants } = await r.json();
+  state.tenants = tenants;
+  renderTenantBar();
+}
+
+async function loadState() {
+  const r = await fetch(withTenant('/api/state'));
+  const snap = await r.json();
+  if (snap.error) {
+    document.body.innerHTML = `<div style="padding:40px;text-align:center;color:#f44">${snap.error}</div>`;
+    return;
+  }
+  state.conversations = snap.conversations;
+  state.config = snap.config;
+  state.connection = snap.connection;
+  state.meta = snap.meta;
+  state.ghl = snap.ghl;
+  renderConnection();
+  renderTenantBar();
+  renderChatList();
+  renderMessages();
+}
+
+$('modeToggle').addEventListener('change', (e) => state.activeJid && setMode(state.activeJid, e.target.checked ? 'human' : 'ai'));
 $('manualSend').addEventListener('click', sendManual);
 $('manualInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendManual(); });
 $('btnPrompt').addEventListener('click', () => {
@@ -137,37 +185,32 @@ $('btnPrompt').addEventListener('click', () => {
 });
 $('promptCancel').addEventListener('click', () => $('promptModal').classList.add('hidden'));
 $('promptSave').addEventListener('click', savePrompt);
+$('tenantSelect').addEventListener('change', (e) => switchTenant(e.target.value));
 
+socket.emit('subscribe', state.tenantId);
 socket.on('state', (snap) => {
   state.conversations = snap.conversations;
   state.config = snap.config;
   state.connection = snap.connection;
+  state.meta = snap.meta;
+  state.ghl = snap.ghl;
   renderConnection();
+  renderTenantBar();
   renderChatList();
   renderMessages();
 });
-
-socket.on('connection', (conn) => {
-  state.connection = conn;
-  renderConnection();
-});
-
-socket.on('message', ({ jid, conversation }) => {
-  const i = state.conversations.findIndex((c) => c.jid === jid);
+socket.on('connection', ({ connection }) => { state.connection = connection; renderConnection(); });
+socket.on('message', ({ conversation }) => {
+  const i = state.conversations.findIndex((c) => c.jid === conversation.jid);
   if (i >= 0) state.conversations[i] = conversation;
   else state.conversations.unshift(conversation);
   state.conversations.sort((a, b) => b.updatedAt - a.updatedAt);
   renderChatList();
-  if (jid === state.activeJid) renderMessages();
+  if (conversation.jid === state.activeJid) renderMessages();
 });
+socket.on('tenant:added', () => loadTenants());
 
-socket.on('mode', ({ jid }) => {
-  // El message handler ya actualizó el conversation; refresca por si acaso.
-  fetch('/api/state').then((r) => r.json()).then((snap) => {
-    state.conversations = snap.conversations;
-    renderChatList();
-    if (jid === state.activeJid) renderMessages();
-  });
-});
-
-socket.on('config', (cfg) => { state.config = cfg; });
+(async () => {
+  await loadTenants();
+  await loadState();
+})();

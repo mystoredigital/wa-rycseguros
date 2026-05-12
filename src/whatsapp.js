@@ -7,14 +7,9 @@ import {
 import { Boom } from '@hapi/boom';
 import pino from 'pino';
 import qrcode from 'qrcode';
-import path from 'node:path';
-import { store } from './state.js';
 import { generateReply } from './ai.js';
 
-const AUTH_DIR = path.resolve('./data/auth_baileys');
 const logger = pino({ level: 'warn' });
-
-let sock = null;
 
 function extractText(message) {
   if (!message) return '';
@@ -27,82 +22,94 @@ function extractText(message) {
   );
 }
 
-async function handleIncoming(msg) {
-  if (!msg.message || msg.key.fromMe) return;
-  const jid = msg.key.remoteJid;
-  if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast') return;
-
-  const text = extractText(msg.message);
-  if (!text.trim()) return;
-
-  const name = msg.pushName || undefined;
-  const conv = store.addMessage(jid, { role: 'user', text }, name);
-
-  if (conv.mode !== 'ai') return;
-
-  try {
-    await sock.sendPresenceUpdate('composing', jid);
-    const reply = await generateReply({
-      systemPrompt: store.config.systemPrompt,
-      history: conv.messages,
-    });
-    if (reply && reply.trim()) {
-      await sock.sendMessage(jid, { text: reply });
-      store.addMessage(jid, { role: 'assistant', text: reply });
-    }
-    await sock.sendPresenceUpdate('paused', jid);
-  } catch (e) {
-    console.error('[ai] error', e.message);
-    store.addMessage(jid, { role: 'system', text: `Error IA: ${e.message}` });
+export class WhatsAppSession {
+  constructor(store) {
+    this.store = store;
+    this.sock = null;
+    this._reconnectTimer = null;
   }
-}
 
-export async function startWhatsApp() {
-  const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-  const { version } = await fetchLatestBaileysVersion();
+  async start() {
+    const { state, saveCreds } = await useMultiFileAuthState(this.store.authDir);
+    const { version } = await fetchLatestBaileysVersion();
 
-  sock = makeWASocket({
-    version,
-    auth: state,
-    logger,
-    printQRInTerminal: false,
-    browser: ['MyStore Agent', 'Chrome', '1.0'],
-  });
+    this.sock = makeWASocket({
+      version,
+      auth: state,
+      logger,
+      printQRInTerminal: false,
+      browser: [`MyStore Agent · ${this.store.tenantId}`, 'Chrome', '1.0'],
+    });
 
-  sock.ev.on('creds.update', saveCreds);
+    this.sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr } = update;
-    if (qr) {
-      const dataUrl = await qrcode.toDataURL(qr);
-      store.setConnection('qr', dataUrl);
-      console.log('[wa] QR generado — escanéalo desde el dashboard');
+    this.sock.ev.on('connection.update', async (update) => {
+      const { connection, lastDisconnect, qr } = update;
+      if (qr) {
+        const dataUrl = await qrcode.toDataURL(qr);
+        this.store.setConnection('qr', dataUrl);
+      }
+      if (connection === 'open') {
+        this.store.setConnection('connected');
+        console.log(`[wa:${this.store.tenantId}] conectado`);
+      }
+      if (connection === 'close') {
+        const code = new Boom(lastDisconnect?.error).output?.statusCode;
+        const loggedOut = code === DisconnectReason.loggedOut;
+        this.store.setConnection(loggedOut ? 'logged_out' : 'disconnected');
+        console.log(`[wa:${this.store.tenantId}] cerrado code=${code} reconnect=${!loggedOut}`);
+        if (!loggedOut) {
+          clearTimeout(this._reconnectTimer);
+          this._reconnectTimer = setTimeout(() => this.start().catch(console.error), 3000);
+        }
+      }
+    });
+
+    this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
+      if (type !== 'notify') return;
+      for (const m of messages) {
+        await this._handleIncoming(m).catch((e) =>
+          console.error(`[wa:${this.store.tenantId}] handle`, e.message)
+        );
+      }
+    });
+
+    return this.sock;
+  }
+
+  async _handleIncoming(msg) {
+    if (!msg.message || msg.key.fromMe) return;
+    const jid = msg.key.remoteJid;
+    if (!jid || jid.endsWith('@g.us') || jid === 'status@broadcast') return;
+
+    const text = extractText(msg.message);
+    if (!text.trim()) return;
+
+    const name = msg.pushName || undefined;
+    const conv = this.store.addMessage(jid, { role: 'user', text }, name);
+
+    if (conv.mode !== 'ai') return;
+
+    try {
+      await this.sock.sendPresenceUpdate('composing', jid);
+      const reply = await generateReply({
+        systemPrompt: this.store.config.systemPrompt,
+        history: conv.messages,
+      });
+      if (reply && reply.trim()) {
+        await this.sock.sendMessage(jid, { text: reply });
+        this.store.addMessage(jid, { role: 'assistant', text: reply });
+      }
+      await this.sock.sendPresenceUpdate('paused', jid);
+    } catch (e) {
+      console.error(`[ai:${this.store.tenantId}]`, e.message);
+      this.store.addMessage(jid, { role: 'system', text: `Error IA: ${e.message}` });
     }
-    if (connection === 'open') {
-      store.setConnection('connected');
-      console.log('[wa] conectado');
-    }
-    if (connection === 'close') {
-      const code = new Boom(lastDisconnect?.error).output?.statusCode;
-      const loggedOut = code === DisconnectReason.loggedOut;
-      store.setConnection(loggedOut ? 'logged_out' : 'disconnected');
-      console.log('[wa] cerrado', code, 'reconectar:', !loggedOut);
-      if (!loggedOut) setTimeout(() => startWhatsApp().catch(console.error), 3000);
-    }
-  });
+  }
 
-  sock.ev.on('messages.upsert', async ({ messages, type }) => {
-    if (type !== 'notify') return;
-    for (const m of messages) {
-      await handleIncoming(m).catch((e) => console.error('[wa] handle', e));
-    }
-  });
-
-  return sock;
-}
-
-export async function sendManual(jid, text) {
-  if (!sock) throw new Error('WhatsApp no conectado');
-  await sock.sendMessage(jid, { text });
-  store.addMessage(jid, { role: 'assistant', text, manual: true });
+  async send(jid, text) {
+    if (!this.sock) throw new Error('WhatsApp no conectado');
+    await this.sock.sendMessage(jid, { text });
+    this.store.addMessage(jid, { role: 'assistant', text, manual: true });
+  }
 }
