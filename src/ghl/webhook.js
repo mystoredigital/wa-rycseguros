@@ -21,8 +21,9 @@ export function verifyWebhookSignature(rawBody, signatureB64, publicKeyPem) {
 
 let warnedMissingKey = false;
 
-// Middleware Express. Si GHL_WEBHOOK_PUBLIC_KEY está configurado, rechaza
-// peticiones sin firma válida. Si no, acepta y avisa una sola vez (modo dev).
+// Middleware Express para webhooks de eventos GHL (NO aplicar al outbound del
+// Conversation Provider — GHL no firma ese). Si GHL_WEBHOOK_PUBLIC_KEY está
+// configurado, rechaza peticiones sin firma válida. Sin key acepta con warning.
 export function ghlWebhookGuard(req, res, next) {
   // GET (validación del delivery URL en el panel de GHL) — no se firma
   if (req.method !== 'POST') return next();

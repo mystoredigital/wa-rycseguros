@@ -37,7 +37,7 @@ class TenantRegistry extends EventEmitter {
       console.warn('[bootstrap] ⚠️ Hay tenants con GHL conectado pero GHL_CONVERSATION_PROVIDER_ID no está configurado — el mirroring a GHL Conversations no funcionará');
     }
     if (hasGhlTenant && !process.env.GHL_WEBHOOK_PUBLIC_KEY) {
-      console.warn('[bootstrap] ⚠️ GHL_WEBHOOK_PUBLIC_KEY no configurado — los webhooks de GHL se aceptan sin firma');
+      console.warn('[bootstrap] ⚠️ GHL_WEBHOOK_PUBLIC_KEY no configurado — los webhooks de eventos (POST /webhooks/ghl) se aceptan sin firma');
     }
   }
 

@@ -139,9 +139,6 @@ export function startServer(port = 3000) {
   }));
   app.use(express.urlencoded({ extended: true }));
   app.use(authMiddleware);
-  // Solo POST a /webhooks/ghl/* requiere firma. GET (validación del delivery URL) y
-  // otras rutas no se ven afectadas.
-  app.use('/webhooks/ghl', ghlWebhookGuard);
   app.use(express.static(path.resolve('./public')));
 
   // Servir /embed sin extensión
@@ -396,8 +393,11 @@ export function startServer(port = 3000) {
     }
   });
 
-  app.post('/webhooks/ghl', (req, res) => {
-    // Webhook genérico para eventos como ContactCreate, etc. — por ahora solo log.
+  // Webhook genérico de eventos (ContactCreate, OutboundMessage, etc.).
+  // GHL firma estos con x-wh-signature (RSA-SHA256) — el guard valida cuando
+  // GHL_WEBHOOK_PUBLIC_KEY está set. NO aplica a /webhooks/ghl/outbound porque
+  // el Conversation Provider outbound NO viene firmado por GHL.
+  app.post('/webhooks/ghl', ghlWebhookGuard, (req, res) => {
     console.log('[webhook ghl] type:', req.body?.type, 'location:', req.body?.locationId);
     res.json({ ok: true });
   });
