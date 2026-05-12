@@ -1,12 +1,23 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: whatsapp-agent-mystore:latest
     container_name: whatsapp-agent-mystore
     restart: unless-stopped
-    ports:
-      - "3000:3000"
-    env_file:
-      - .env
+    networks:
+      - dokploy-network
     volumes:
-      - ./data:/app/data
-      - ./credentials:/app/credentials
+      - ../files/data:/app/data
+      - ../files/credentials:/app/credentials
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.whatsapp-agent-mystore.entrypoints=websecure
+      - traefik.http.routers.whatsapp-agent-mystore.rule=Host(`wa.mystoredigital.cloud`)
+      - traefik.http.routers.whatsapp-agent-mystore.tls.certresolver=letsencrypt
+      - traefik.http.services.whatsapp-agent-mystore.loadbalancer.server.port=3000
+
+networks:
+  dokploy-network:
+    external: true
