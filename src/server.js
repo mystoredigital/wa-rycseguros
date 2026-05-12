@@ -181,12 +181,23 @@ export function startServer(port = 3000) {
   // --- GHL Embed SSO ---
   app.post('/api/embed/sso', async (req, res) => {
     try {
-      const { encryptedData } = req.body || {};
-      if (!encryptedData) return res.status(400).json({ error: 'encryptedData requerido' });
-      const data = decryptGhlPayload(encryptedData, process.env.GHL_SHARED_SECRET);
-      // data esperado: { userId, companyId, activeLocation, role, type, email, ... }
-      const locationId = data.activeLocation || data.locationId;
-      if (!locationId) return res.status(400).json({ error: 'Payload sin activeLocation', payload: data });
+      const { encryptedData, locationId: locFromUrl, userId, userEmail } = req.body || {};
+      let locationId, userInfo = {};
+
+      if (encryptedData) {
+        const data = decryptGhlPayload(encryptedData, process.env.GHL_SHARED_SECRET);
+        locationId = data.activeLocation || data.locationId;
+        userInfo = { userId: data.userId, role: data.role, email: data.email, source: 'postmessage' };
+      } else if (locFromUrl) {
+        // Soft SSO: GHL substituyó {{location.id}} en el URL del Custom Menu Link.
+        // Sin firma criptográfica, pero el link solo lo ven usuarios con acceso a esa sub-account.
+        locationId = locFromUrl;
+        userInfo = { userId, email: userEmail, source: 'url' };
+      } else {
+        return res.status(400).json({ error: 'encryptedData o locationId requerido' });
+      }
+
+      if (!locationId) return res.status(400).json({ error: 'locationId no encontrado en payload' });
       const tenant = tenants.get(locationId);
       if (!tenant) return res.status(404).json({ error: `Tenant ${locationId} no existe (instalar app primero)` });
 
@@ -194,10 +205,10 @@ export function startServer(port = 3000) {
       res.cookie(EMBED_COOKIE, signed, {
         httpOnly: true,
         secure: true,
-        sameSite: 'none', // permite cargar desde iframe en GHL
+        sameSite: 'none',
         maxAge: SESSION_TTL * 1000,
       });
-      res.json({ locationId, userId: data.userId, role: data.role, email: data.email });
+      res.json({ locationId, ...userInfo });
     } catch (e) {
       console.error('[embed sso]', e.message);
       res.status(500).json({ error: e.message });
