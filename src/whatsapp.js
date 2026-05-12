@@ -14,6 +14,54 @@ import { resolvePhoneAndJid } from './ghl/phone.js';
 
 const logger = pino({ level: 'warn' });
 
+// Anti-ban / human-like behavior config (overridable via env)
+const HUMAN_DELAY_MIN_MS = Number(process.env.HUMAN_DELAY_MIN_MS ?? 3000);
+const HUMAN_DELAY_MAX_MS = Number(process.env.HUMAN_DELAY_MAX_MS ?? 12000);
+const PER_CHAT_COOLDOWN_MS = Number(process.env.PER_CHAT_COOLDOWN_MS ?? 4000);
+const GLOBAL_MAX_PER_MIN = Number(process.env.GLOBAL_MAX_PER_MIN ?? 20);
+const QUIET_HOURS_START = Number(process.env.QUIET_HOURS_START ?? 23);
+const QUIET_HOURS_END = Number(process.env.QUIET_HOURS_END ?? 7);
+const QUIET_HOURS_TZ = process.env.TIMEZONE || 'America/Guayaquil';
+const NEW_CONTACT_REQUIRES_HUMAN = (process.env.NEW_CONTACT_REQUIRES_HUMAN || 'false') === 'true';
+
+const RECONNECT_BASE_MS = 3000;
+const RECONNECT_MAX_MS = 60_000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function jitter(min, max) {
+  return Math.floor(min + Math.random() * Math.max(0, max - min));
+}
+
+function isInQuietHours(now = new Date()) {
+  if (QUIET_HOURS_START === QUIET_HOURS_END) return false;
+  const hour = Number(
+    new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: QUIET_HOURS_TZ }).format(now)
+  );
+  return QUIET_HOURS_START < QUIET_HOURS_END
+    ? hour >= QUIET_HOURS_START && hour < QUIET_HOURS_END
+    : hour >= QUIET_HOURS_START || hour < QUIET_HOURS_END;
+}
+
+class RateLimiter {
+  constructor() {
+    this._lastByJid = new Map();
+    this._window = [];
+  }
+  check(jid) {
+    const now = Date.now();
+    const last = this._lastByJid.get(jid) || 0;
+    if (now - last < PER_CHAT_COOLDOWN_MS) return { ok: false, reason: 'per-chat cooldown' };
+    this._window = this._window.filter((t) => now - t < 60_000);
+    if (this._window.length >= GLOBAL_MAX_PER_MIN) return { ok: false, reason: 'global rate limit' };
+    return { ok: true };
+  }
+  record(jid) {
+    const now = Date.now();
+    this._lastByJid.set(jid, now);
+    this._window.push(now);
+  }
+}
+
 function extractText(message) {
   if (!message) return '';
   return (
@@ -30,8 +78,27 @@ export class WhatsAppSession {
     this.store = store;
     this.sock = null;
     this._reconnectTimer = null;
+    this._reconnectAttempt = 0;
     this._outboundSeen = new Set();
     this._sentByUs = new Set();
+    this._limiter = new RateLimiter();
+    this.metrics = {
+      sent: 0,
+      skippedRateLimit: 0,
+      skippedQuietHours: 0,
+      skippedGreylist: 0,
+      reconnects: 0,
+    };
+  }
+
+  getMetrics() {
+    return { ...this.metrics };
+  }
+
+  _bump(key) {
+    if (!(key in this.metrics)) return;
+    this.metrics[key]++;
+    this.store.emit('metrics', { tenantId: this.store.tenantId, metrics: this.getMetrics() });
   }
 
   _rememberSentByUs(messageId) {
@@ -60,7 +127,7 @@ export class WhatsAppSession {
       auth: state,
       logger,
       printQRInTerminal: false,
-      browser: [`MyStore Agent · ${this.store.tenantId}`, 'Chrome', '1.0'],
+      browser: ['Mac OS', 'Chrome', '120.0.0'],
     });
 
     this.sock.ev.on('creds.update', saveCreds);
@@ -72,6 +139,7 @@ export class WhatsAppSession {
         this.store.setConnection('qr', dataUrl);
       }
       if (connection === 'open') {
+        this._reconnectAttempt = 0;
         this.store.setConnection('connected');
         console.log(`[wa:${this.store.tenantId}] conectado`);
       }
@@ -79,10 +147,15 @@ export class WhatsAppSession {
         const code = new Boom(lastDisconnect?.error).output?.statusCode;
         const loggedOut = code === DisconnectReason.loggedOut;
         this.store.setConnection(loggedOut ? 'logged_out' : 'disconnected');
-        console.log(`[wa:${this.store.tenantId}] cerrado code=${code} reconnect=${!loggedOut}`);
         if (!loggedOut) {
+          const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** this._reconnectAttempt);
+          this._reconnectAttempt = Math.min(this._reconnectAttempt + 1, 10);
+          console.log(`[wa:${this.store.tenantId}] cerrado code=${code} reconnect en ${delay}ms`);
           clearTimeout(this._reconnectTimer);
-          this._reconnectTimer = setTimeout(() => this.start().catch(console.error), 3000);
+          this._reconnectTimer = setTimeout(() => this.start().catch(console.error), delay);
+          this._bump('reconnects');
+        } else {
+          console.log(`[wa:${this.store.tenantId}] cerrado code=${code} (loggedOut, no reconnect)`);
         }
       }
     });
@@ -135,15 +208,45 @@ export class WhatsAppSession {
 
     if (conv.mode !== 'ai') return;
 
+    // Greylist: primer mensaje de un contacto nuevo → operador humano lo atiende.
+    if (NEW_CONTACT_REQUIRES_HUMAN) {
+      const priorUserMsgs = conv.messages.filter((m) => m.role === 'user').length;
+      if (priorUserMsgs <= 1) {
+        this.store.setMode(jid, 'human');
+        console.log(`[wa:${this.store.tenantId}] greylist: contacto nuevo ${jid} → modo humano`);
+        this._bump('skippedGreylist');
+        return;
+      }
+    }
+
+    if (isInQuietHours()) {
+      console.log(`[wa:${this.store.tenantId}] quiet hours: skip auto-reply para ${jid}`);
+      this._bump('skippedQuietHours');
+      return;
+    }
+
+    const limit = this._limiter.check(jid);
+    if (!limit.ok) {
+      console.warn(`[wa:${this.store.tenantId}] rate limit (${limit.reason}): skip ${jid}`);
+      this._bump('skippedRateLimit');
+      return;
+    }
+
     try {
+      const startedAt = Date.now();
       await this.sock.sendPresenceUpdate('composing', jid);
       const reply = await generateReply({
         systemPrompt: this.store.config.systemPrompt,
         history: conv.messages,
       });
       if (reply && reply.trim()) {
+        const target = jitter(HUMAN_DELAY_MIN_MS, HUMAN_DELAY_MAX_MS);
+        const elapsed = Date.now() - startedAt;
+        if (elapsed < target) await sleep(target - elapsed);
         const sent = await this.sock.sendMessage(jid, { text: reply });
         this._rememberSentByUs(sent?.key?.id);
+        this._limiter.record(jid);
+        this._bump('sent');
         this.store.addMessage(jid, { role: 'assistant', text: reply });
         // Mirror la respuesta de IA a GHL como inbound del lado business
         if (resolved?.phone) {
@@ -220,6 +323,7 @@ export class WhatsAppSession {
   // — el authDir conserva creds inválidas que Baileys no recupera solo.
   async relink() {
     clearTimeout(this._reconnectTimer);
+    this._reconnectAttempt = 0;
     try { await this.sock?.logout(); } catch {}
     try { this.sock?.end(); } catch {}
     this.sock = null;
