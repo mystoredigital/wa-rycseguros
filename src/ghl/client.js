@@ -92,4 +92,21 @@ export class GHLClient {
       },
     });
   }
+
+  // Crea un Custom Conversation Provider scoped a esta location. Patrón multi-tenant:
+  // cada sub-account que instala la app obtiene su propio providerId — el providerId
+  // del Marketplace está scoped a la sub-account donde se creó originalmente.
+  async createConversationProvider({ name, deliveryUrl }) {
+    const locationId = this.store.ghl.locationId;
+    if (!locationId) throw new Error('Tenant sin locationId');
+    if (!deliveryUrl) throw new Error('deliveryUrl requerido');
+    return this._req('POST', '/conversations/providers', {
+      json: {
+        locationId,
+        name: name || 'WhatsApp Agent',
+        type: 'Custom',
+        deliveryUrl,
+      },
+    });
+  }
 }

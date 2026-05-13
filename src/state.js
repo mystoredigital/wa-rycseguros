@@ -162,7 +162,12 @@ export class TenantStore extends EventEmitter {
       conversations: Array.from(this.conversations.values()).sort((a, b) => b.updatedAt - a.updatedAt),
       config: this.config,
       connection: this.connection,
-      ghl: this.ghl ? { locationId: this.ghl.locationId, companyId: this.ghl.companyId, hasToken: true } : null,
+      ghl: this.ghl ? {
+        locationId: this.ghl.locationId,
+        companyId: this.ghl.companyId,
+        hasToken: true,
+        conversationProviderId: this.ghl.conversationProviderId || null,
+      } : null,
     };
   }
 }

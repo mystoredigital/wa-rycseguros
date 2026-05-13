@@ -79,7 +79,30 @@ function renderTenantBar() {
     sel.appendChild(opt);
   }
   $('ghlBadge').textContent = state.ghl ? `🔗 GHL: ${state.ghl.locationId.slice(0, 8)}…` : '';
+  const needsProvider = !!(state.ghl && !state.ghl.conversationProviderId);
+  $('btnProvisionProvider').classList.toggle('hidden', !needsProvider);
   renderMetrics();
+}
+
+async function provisionProvider() {
+  const btn = $('btnProvisionProvider');
+  btn.disabled = true;
+  const original = btn.textContent;
+  btn.textContent = 'Creando…';
+  try {
+    const r = await fetch('/api/ghl/provision-provider', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tenant: state.tenantId }),
+    });
+    const data = await r.json();
+    if (!r.ok) { alert('Error: ' + (data.error || r.status)); return; }
+    alert('Provider creado: ' + data.conversationProviderId);
+    await loadState();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
 }
 
 function renderMetrics() {
@@ -258,6 +281,7 @@ $('promptCancel').addEventListener('click', () => $('promptModal').classList.add
 $('promptSave').addEventListener('click', savePrompt);
 $('tenantSelect').addEventListener('change', (e) => switchTenant(e.target.value));
 $('btnRelink').addEventListener('click', relink);
+$('btnProvisionProvider').addEventListener('click', provisionProvider);
 
 socket.emit('subscribe', state.tenantId);
 socket.on('state', (snap) => {

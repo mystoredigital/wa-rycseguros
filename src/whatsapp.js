@@ -274,7 +274,9 @@ export class WhatsAppSession {
 
   async _pushInboundToGHL({ jid, phone, text, name, altId }) {
     if (!this.store.ghl?.accessToken) return;
-    const providerId = process.env.GHL_CONVERSATION_PROVIDER_ID;
+    // Preferir el providerId per-tenant (creado en OAuth callback); fallback al env var
+    // para no romper la sub-account original que usaba el providerId del Marketplace.
+    const providerId = this.store.ghl.conversationProviderId || process.env.GHL_CONVERSATION_PROVIDER_ID;
     if (!providerId) return;
 
     const ghl = new GHLClient(this.store);
@@ -298,7 +300,7 @@ export class WhatsAppSession {
 
   async _pushAIReplyToGHL({ jid, phone, text }) {
     if (!this.store.ghl?.accessToken) return;
-    const providerId = process.env.GHL_CONVERSATION_PROVIDER_ID;
+    const providerId = this.store.ghl.conversationProviderId || process.env.GHL_CONVERSATION_PROVIDER_ID;
     if (!providerId) return;
 
     const ghl = new GHLClient(this.store);

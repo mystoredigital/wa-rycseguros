@@ -11,6 +11,32 @@ import { GHLClient } from './ghl/client.js';
 import { decryptGhlPayload, signSession, verifySession } from './ghl/sso.js';
 import { ghlWebhookGuard } from './ghl/webhook.js';
 
+// Provisiona un Custom Conversation Provider para un tenant recién conectado.
+// Idempotente: si ya tiene conversationProviderId no hace nada.
+// Best-effort: si falla, loguea y deja que el tenant use el env var fallback
+// (que solo funcionará para la sub-account original donde se creó en Marketplace).
+async function ensureConversationProvider(tenant) {
+  if (tenant.ghl?.conversationProviderId) return tenant.ghl.conversationProviderId;
+  if (!tenant.ghl?.accessToken) return null;
+  const deliveryUrl = `${process.env.OPENROUTER_SITE_URL || 'https://wa.mystoredigital.cloud'}/webhooks/ghl/outbound`;
+  const name = `${process.env.BUSINESS_NAME || 'WhatsApp Agent'} (${tenant.tenantId.slice(0, 8)})`;
+  try {
+    const client = new GHLClient(tenant);
+    const provider = await client.createConversationProvider({ name, deliveryUrl });
+    const providerId = provider?.id || provider?.providerId || provider?._id;
+    if (!providerId) {
+      console.warn(`[ghl:${tenant.tenantId}] createConversationProvider devolvió shape inesperada:`, JSON.stringify(provider).slice(0, 200));
+      return null;
+    }
+    tenant.setGhlTokens({ conversationProviderId: providerId });
+    console.log(`[ghl:${tenant.tenantId}] conversation provider creado: ${providerId}`);
+    return providerId;
+  } catch (e) {
+    console.error(`[ghl:${tenant.tenantId}] no se pudo crear conversation provider:`, e.message);
+    return null;
+  }
+}
+
 const EMBED_COOKIE = 'embed_session';
 const SESSION_TTL = 60 * 60 * 12; // 12h
 
@@ -186,6 +212,19 @@ export function startServer(port = 3000) {
     } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
   });
 
+  // Provisiona (o re-provisiona si force=true) el Conversation Provider del tenant.
+  // Útil para sub-accounts conectadas antes del fix multi-tenant.
+  app.post('/api/ghl/provision-provider', async (req, res) => {
+    try {
+      const t = getTenant(req);
+      if (!t.ghl?.accessToken) return res.status(400).json({ error: 'Tenant sin GHL conectado' });
+      if (req.body?.force) t.setGhlTokens({ conversationProviderId: null });
+      const providerId = await ensureConversationProvider(t);
+      if (!providerId) return res.status(500).json({ error: 'No se pudo crear (revisa logs del server)' });
+      res.json({ ok: true, conversationProviderId: providerId });
+    } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  });
+
   app.post('/api/relink', async (req, res) => {
     try {
       const t = getTenant(req);
@@ -272,6 +311,7 @@ export function startServer(port = 3000) {
         let tenant = tenants.get(tenantId);
         if (!tenant) tenant = await tenants.create(tenantId, { kind: 'ghl', companyId: tokens.companyId });
         tenant.setGhlTokens(tokens);
+        await ensureConversationProvider(tenant);
         console.log(`[oauth] tenant ${tenantId} instalado (company=${tokens.companyId})`);
         return res.send(successPage({ tenantId, companyId: tokens.companyId }));
       }
@@ -325,6 +365,7 @@ export function startServer(port = 3000) {
       let tenant = tenants.get(locationId);
       if (!tenant) tenant = await tenants.create(locationId, { kind: 'ghl', companyId });
       tenant.setGhlTokens(locTokens);
+      await ensureConversationProvider(tenant);
       console.log(`[oauth] tenant ${locationId} conectado desde agencia ${companyId}`);
 
       res.send(successPage({ tenantId: locationId, companyId }));

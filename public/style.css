@@ -57,6 +57,8 @@ body.embed .topbar { padding:8px 16px; }
 .btn.primary { background: #1d9bf0; border-color: #1d9bf0; }
 .btn.primary:hover { background: #1a8cd8; }
 .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn.warn { background: #5a3a14; color: #ffb300; border-color: #ffb300; }
+.btn.warn:hover { background: #6a4a24; }
 
 .layout {
   display: grid;

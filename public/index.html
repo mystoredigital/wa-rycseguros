@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
 <title>My Store · WhatsApp Agent</title>
-<link rel="stylesheet" href="/style.css?v=20260512b" />
+<link rel="stylesheet" href="/style.css?v=20260512c" />
 </head>
 <body>
 <header class="topbar">
@@ -13,6 +13,7 @@
   <div class="status" id="connStatus">conectando…</div>
   <button id="btnRelink" class="btn hidden">Re-link QR</button>
   <span id="ghlBadge" class="badge"></span>
+  <button id="btnProvisionProvider" class="btn warn hidden" title="Crea un Conversation Provider para esta sub-account (requerido para que GHL acepte mensajes inbound)">⚠ Provisionar provider</button>
   <span id="metricsBar" class="metrics" title="Contadores desde el inicio del proceso"></span>
   <label class="ai-global" title="Pausa la IA para TODAS las conversaciones de este tenant">
     <input type="checkbox" id="aiGlobalToggle" />
@@ -63,6 +64,6 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="/app.js?v=20260512b"></script>
+<script src="/app.js?v=20260512c"></script>
 </body>
 </html>
