@@ -208,10 +208,6 @@ export class WhatsAppSession {
     this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
       if (type !== 'notify') return;
       for (const m of messages) {
-        // Log diagnóstico: estructura del mensaje para depurar media no detectada
-        const rawKeys = Object.keys(m.message || {}).join(',');
-        const innerKeys = Object.keys(unwrapMessage(m.message) || {}).join(',');
-        console.log(`[wa:${this.store.tenantId}] upsert fromMe=${m.key.fromMe} jid=${m.key.remoteJid} raw=[${rawKeys}] inner=[${innerKeys}]`);
         await this._handleIncoming(m).catch((e) =>
           console.error(`[wa:${this.store.tenantId}] handle`, e.message)
         );
