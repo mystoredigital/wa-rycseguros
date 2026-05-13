@@ -125,15 +125,17 @@ function selectLocationPage({ companyId, locations, connected }) {
   const rows = locations.length
     ? locations.map((l) => {
         const isConn = connected.has(l.id);
+        const label = isConn ? 'Reconectar' : 'Conectar';
+        const title = isConn ? 'Re-deriva el location token desde el agency token actual — útil tras actualizar scopes de la app' : '';
         return `<div class="row">
           <div class="info">
-            <div class="name">${escapeHtml(l.name || '(sin nombre)')}</div>
+            <div class="name">${escapeHtml(l.name || '(sin nombre)')}${isConn ? ' <span style="color:#4caf50;font-size:11px">● conectada</span>' : ''}</div>
             <div class="id">${escapeHtml(l.id)}</div>
           </div>
           <form method="POST" action="/oauth/connect-location" style="margin:0">
             <input type="hidden" name="companyId" value="${escapeHtml(companyId)}">
             <input type="hidden" name="locationId" value="${escapeHtml(l.id)}">
-            <button type="submit" ${isConn ? 'disabled' : ''}>${isConn ? 'Conectada' : 'Conectar'}</button>
+            <button type="submit" title="${escapeHtml(title)}">${label}</button>
           </form>
         </div>`;
       }).join('')
