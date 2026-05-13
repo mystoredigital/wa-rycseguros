@@ -33,59 +33,89 @@ async function ensureConversationProvider(tenant) {
   const name = `${process.env.BUSINESS_NAME || 'WhatsApp Agent'} (${tenant.tenantId.slice(0, 8)})`;
   const body = { locationId: tenant.ghl.locationId, name, type: 'Custom', deliveryUrl };
 
-  async function postWith(token, source) {
-    const resp = await fetch('https://services.leadconnectorhq.com/conversations/providers', {
-      method: 'POST',
+  async function callWith(token, method, source, urlSuffix = '') {
+    const resp = await fetch(`https://services.leadconnectorhq.com/conversations/providers${urlSuffix}`, {
+      method,
       headers: {
         Authorization: `Bearer ${token}`,
         Version: '2021-07-28',
         'Content-Type': 'application/json',
         Accept: 'application/json',
       },
-      body: JSON.stringify(body),
+      body: method === 'POST' ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(15_000),
     });
     const text = await resp.text();
     if (!resp.ok) {
       const claims = decodeJwtPayload(token);
-      console.error(`[ghl:${tenant.tenantId}] create provider ${source} ${resp.status}: ${text.slice(0, 300)}`);
+      console.error(`[ghl:${tenant.tenantId}] ${method} providers ${source} ${resp.status}: ${text.slice(0, 300)}`);
       console.error(`[ghl:${tenant.tenantId}] token scopes (${source}): ${claims?.oauthMeta?.scopes || claims?.scope || '(no scope claim)'}`);
-      throw new Error(`${resp.status}: ${text.slice(0, 200)}`);
+      throw new Error(`${method} ${resp.status}: ${text.slice(0, 200)}`);
     }
     return text ? JSON.parse(text) : {};
   }
 
-  // 1) Agency token (preferido — Custom Providers son agency-level)
+  function pickProviderId(payload) {
+    if (!payload) return null;
+    if (payload.id || payload.providerId || payload._id) return payload.id || payload.providerId || payload._id;
+    const list = payload.providers || payload.data || (Array.isArray(payload) ? payload : null);
+    if (Array.isArray(list)) {
+      // Preferir uno cuyo nombre coincida con esta app
+      const ours = list.find((p) => /whatsapp|mystore/i.test(p?.name || ''));
+      const pick = ours || list[0];
+      return pick?.id || pick?.providerId || pick?._id || null;
+    }
+    return null;
+  }
+
+  // Estrategia A: listar providers existentes (GHL auto-registra el provider de la app
+  // al instalarse en una sub-account). Probamos con agency token y luego location.
+  const locationId = tenant.ghl.locationId;
+  const tokensToTry = [];
   if (tenant.ghl.companyId) {
     try {
       const agency = await getFreshAgencyToken(tenant.ghl.companyId);
-      const provider = await postWith(agency.accessToken, 'agency');
-      const providerId = provider?.id || provider?.providerId || provider?._id;
+      tokensToTry.push({ token: agency.accessToken, source: 'agency' });
+    } catch (e) {
+      console.warn(`[ghl:${tenant.tenantId}] no se pudo obtener agency token:`, e.message);
+    }
+  }
+  try {
+    const client = new GHLClient(tenant);
+    tokensToTry.push({ token: await client._ensureFreshToken(), source: 'location' });
+  } catch (e) {
+    console.warn(`[ghl:${tenant.tenantId}] no se pudo obtener location token:`, e.message);
+  }
+
+  for (const { token, source } of tokensToTry) {
+    try {
+      const list = await callWith(token, 'GET', source + '-list', `?locationId=${encodeURIComponent(locationId)}`);
+      const providerId = pickProviderId(list);
       if (providerId) {
         tenant.setGhlTokens({ conversationProviderId: providerId });
-        console.log(`[ghl:${tenant.tenantId}] conversation provider creado (agency): ${providerId}`);
+        console.log(`[ghl:${tenant.tenantId}] provider existente encontrado (${source}): ${providerId}`);
         return providerId;
       }
-      console.warn(`[ghl:${tenant.tenantId}] agency respuesta sin id:`, JSON.stringify(provider).slice(0, 200));
+      console.log(`[ghl:${tenant.tenantId}] GET providers (${source}) sin resultados utilizables:`, JSON.stringify(list).slice(0, 200));
     } catch (e) {
-      console.warn(`[ghl:${tenant.tenantId}] agency falló, probando con location token:`, e.message);
+      console.warn(`[ghl:${tenant.tenantId}] GET providers ${source} falló:`, e.message);
     }
   }
 
-  // 2) Location token (fallback — funciona en algunos casos con scopes adecuados)
-  try {
-    const client = new GHLClient(tenant);
-    const token = await client._ensureFreshToken();
-    const provider = await postWith(token, 'location');
-    const providerId = provider?.id || provider?.providerId || provider?._id;
-    if (providerId) {
-      tenant.setGhlTokens({ conversationProviderId: providerId });
-      console.log(`[ghl:${tenant.tenantId}] conversation provider creado (location): ${providerId}`);
-      return providerId;
+  // Estrategia B: intentar crear (esperado que falle si la app no tiene scopes/feature
+  // habilitado para esto, pero dejamos el intento por completitud y diagnóstico).
+  for (const { token, source } of tokensToTry) {
+    try {
+      const provider = await callWith(token, 'POST', source);
+      const providerId = pickProviderId(provider);
+      if (providerId) {
+        tenant.setGhlTokens({ conversationProviderId: providerId });
+        console.log(`[ghl:${tenant.tenantId}] provider creado (${source}): ${providerId}`);
+        return providerId;
+      }
+    } catch (e) {
+      // Ya logueado dentro de callWith
     }
-    console.warn(`[ghl:${tenant.tenantId}] location respuesta sin id:`, JSON.stringify(provider).slice(0, 200));
-  } catch (e) {
-    console.error(`[ghl:${tenant.tenantId}] no se pudo crear conversation provider:`, e.message);
   }
   return null;
 }
