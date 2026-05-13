@@ -11,30 +11,83 @@ import { GHLClient } from './ghl/client.js';
 import { decryptGhlPayload, signSession, verifySession } from './ghl/sso.js';
 import { ghlWebhookGuard } from './ghl/webhook.js';
 
+// Decodifica un JWT GHL para inspeccionar scopes (sin verificación — solo para debug).
+function decodeJwtPayload(jwt) {
+  try {
+    const part = jwt.split('.')[1];
+    if (!part) return null;
+    return JSON.parse(Buffer.from(part.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString());
+  } catch { return null; }
+}
+
 // Provisiona un Custom Conversation Provider para un tenant recién conectado.
+// Custom Providers son operación a nivel agencia en GHL — el location token, aunque
+// declare conversations.write, no tiene permiso. Usamos el agency token (Company)
+// cuando existe; con fallback al location token por si en algún flujo no hay agency.
 // Idempotente: si ya tiene conversationProviderId no hace nada.
-// Best-effort: si falla, loguea y deja que el tenant use el env var fallback
-// (que solo funcionará para la sub-account original donde se creó en Marketplace).
 async function ensureConversationProvider(tenant) {
   if (tenant.ghl?.conversationProviderId) return tenant.ghl.conversationProviderId;
   if (!tenant.ghl?.accessToken) return null;
+
   const deliveryUrl = `${process.env.OPENROUTER_SITE_URL || 'https://wa.mystoredigital.cloud'}/webhooks/ghl/outbound`;
   const name = `${process.env.BUSINESS_NAME || 'WhatsApp Agent'} (${tenant.tenantId.slice(0, 8)})`;
+  const body = { locationId: tenant.ghl.locationId, name, type: 'Custom', deliveryUrl };
+
+  async function postWith(token, source) {
+    const resp = await fetch('https://services.leadconnectorhq.com/conversations/providers', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Version: '2021-07-28',
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(15_000),
+    });
+    const text = await resp.text();
+    if (!resp.ok) {
+      const claims = decodeJwtPayload(token);
+      console.error(`[ghl:${tenant.tenantId}] create provider ${source} ${resp.status}: ${text.slice(0, 300)}`);
+      console.error(`[ghl:${tenant.tenantId}] token scopes (${source}): ${claims?.oauthMeta?.scopes || claims?.scope || '(no scope claim)'}`);
+      throw new Error(`${resp.status}: ${text.slice(0, 200)}`);
+    }
+    return text ? JSON.parse(text) : {};
+  }
+
+  // 1) Agency token (preferido — Custom Providers son agency-level)
+  if (tenant.ghl.companyId) {
+    try {
+      const agency = await getFreshAgencyToken(tenant.ghl.companyId);
+      const provider = await postWith(agency.accessToken, 'agency');
+      const providerId = provider?.id || provider?.providerId || provider?._id;
+      if (providerId) {
+        tenant.setGhlTokens({ conversationProviderId: providerId });
+        console.log(`[ghl:${tenant.tenantId}] conversation provider creado (agency): ${providerId}`);
+        return providerId;
+      }
+      console.warn(`[ghl:${tenant.tenantId}] agency respuesta sin id:`, JSON.stringify(provider).slice(0, 200));
+    } catch (e) {
+      console.warn(`[ghl:${tenant.tenantId}] agency falló, probando con location token:`, e.message);
+    }
+  }
+
+  // 2) Location token (fallback — funciona en algunos casos con scopes adecuados)
   try {
     const client = new GHLClient(tenant);
-    const provider = await client.createConversationProvider({ name, deliveryUrl });
+    const token = await client._ensureFreshToken();
+    const provider = await postWith(token, 'location');
     const providerId = provider?.id || provider?.providerId || provider?._id;
-    if (!providerId) {
-      console.warn(`[ghl:${tenant.tenantId}] createConversationProvider devolvió shape inesperada:`, JSON.stringify(provider).slice(0, 200));
-      return null;
+    if (providerId) {
+      tenant.setGhlTokens({ conversationProviderId: providerId });
+      console.log(`[ghl:${tenant.tenantId}] conversation provider creado (location): ${providerId}`);
+      return providerId;
     }
-    tenant.setGhlTokens({ conversationProviderId: providerId });
-    console.log(`[ghl:${tenant.tenantId}] conversation provider creado: ${providerId}`);
-    return providerId;
+    console.warn(`[ghl:${tenant.tenantId}] location respuesta sin id:`, JSON.stringify(provider).slice(0, 200));
   } catch (e) {
     console.error(`[ghl:${tenant.tenantId}] no se pudo crear conversation provider:`, e.message);
-    return null;
   }
+  return null;
 }
 
 const EMBED_COOKIE = 'embed_session';
