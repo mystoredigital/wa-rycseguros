@@ -132,7 +132,9 @@ function authMiddleware(req, res, next) {
     req.path === '/embed' ||
     req.path === '/embed.html' ||
     req.path === '/api/embed/sso' ||
-    req.path === '/api/health'
+    req.path === '/api/health' ||
+    // Favicon/PWA assets: el navegador los pide antes de tener auth — bypass
+    /^\/(favicon\.ico|favicon-\d+x\d+\.png|apple-touch-icon\.png|android-chrome-\d+x\d+\.png|site\.webmanifest)$/.test(req.path)
   ) return next();
 
   // 1) Embed session cookie (válido y firmado)
