@@ -92,6 +92,29 @@ function extractText(rawMessage) {
   );
 }
 
+// Detecta si el mensaje cita a otro (reply). Devuelve null si no hay quote.
+// La info viene en <tipo>.contextInfo.quotedMessage para cada tipo de mensaje.
+function extractQuotedInfo(rawMessage) {
+  const m = unwrapMessage(rawMessage);
+  if (!m) return null;
+  const ctx =
+    m.extendedTextMessage?.contextInfo ||
+    m.imageMessage?.contextInfo ||
+    m.videoMessage?.contextInfo ||
+    m.audioMessage?.contextInfo ||
+    m.documentMessage?.contextInfo ||
+    m.stickerMessage?.contextInfo;
+  if (!ctx?.quotedMessage) return null;
+  const quotedText = extractText(ctx.quotedMessage);
+  const quotedMedia = extractMediaInfo(ctx.quotedMessage);
+  return {
+    stanzaId: ctx.stanzaId || null,
+    participant: ctx.participant || null, // jid del autor original
+    text: quotedText || '',
+    mediaType: quotedMedia?.type || null,
+  };
+}
+
 // Detecta media en un message proto (manejando wrappers). Devuelve null si no hay.
 function extractMediaInfo(rawMessage) {
   const message = unwrapMessage(rawMessage);
@@ -267,9 +290,11 @@ export class WhatsAppSession {
       }
 
       const fromMeEffective = text.trim() || fromMeAttachment?.transcription || '';
+      const fromMeQuoted = extractQuotedInfo(msg.message);
       this.store.addMessage(jid, {
         role: 'assistant', manual: true, text: fromMeEffective,
         ...(fromMeAttachment ? { attachment: fromMeAttachment } : {}),
+        ...(fromMeQuoted ? { quoted: fromMeQuoted } : {}),
       });
       const current = this.store.getOrCreateConversation(jid);
       if (current.mode !== 'human') this.store.setMode(jid, 'human');
@@ -320,6 +345,9 @@ export class WhatsAppSession {
     // y GHL en el cuerpo del mensaje; el audio queda como attachment al lado.
     const effectiveText = text.trim() || attachment?.transcription || '';
 
+    // Detectar quote (reply a un mensaje anterior)
+    const quoted = extractQuotedInfo(msg.message);
+
     const conv = this.store.addMessage(
       jid,
       {
@@ -327,6 +355,7 @@ export class WhatsAppSession {
         text: effectiveText,
         ...(attachment ? { attachment } : {}),
         ...(isGroup ? { senderName, senderJid } : {}),
+        ...(quoted ? { quoted } : {}),
       },
       name
     );

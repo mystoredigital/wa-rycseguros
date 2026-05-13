@@ -200,6 +200,12 @@ function renderMessages() {
 
 function renderBubbleBody(m) {
   let html = '';
+  if (m.quoted && (m.quoted.text || m.quoted.mediaType)) {
+    const preview = m.quoted.text
+      ? escapeHtml(m.quoted.text.slice(0, 160))
+      : `<em>${escapeHtml(m.quoted.mediaType)}</em>`;
+    html += `<div class="quoted">${preview}</div>`;
+  }
   if (m.attachment && m.attachment.url) {
     const { url, type, mimetype, fileName, transcription } = m.attachment;
     const safeUrl = escapeHtml(url);

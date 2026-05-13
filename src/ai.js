@@ -51,8 +51,19 @@ async function executeTool(name, args) {
 function toOpenAIMessages(systemPrompt, history) {
   const msgs = [{ role: 'system', content: systemPrompt }];
   for (const m of history) {
-    if (m.role === 'user') msgs.push({ role: 'user', content: m.text });
-    else if (m.role === 'assistant') msgs.push({ role: 'assistant', content: m.text });
+    if (m.role === 'user') {
+      // Si el usuario citó un mensaje anterior, anteponemos el contexto para que
+      // el LLM entienda a qué se refiere ("respondió a tu pregunta sobre X").
+      let content = m.text || '';
+      if (m.quoted?.text) {
+        content = `(respondiendo a: "${m.quoted.text.slice(0, 240)}") ${content}`.trim();
+      } else if (m.quoted?.mediaType) {
+        content = `(respondiendo a un ${m.quoted.mediaType}) ${content}`.trim();
+      }
+      msgs.push({ role: 'user', content });
+    } else if (m.role === 'assistant') {
+      msgs.push({ role: 'assistant', content: m.text });
+    }
   }
   return msgs;
 }
