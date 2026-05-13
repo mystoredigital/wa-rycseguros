@@ -9,7 +9,7 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <link rel="manifest" href="/site.webmanifest" />
-<link rel="stylesheet" href="/style.css?v=20260513c" />
+<link rel="stylesheet" href="/style.css?v=20260513d" />
 </head>
 <body>
 <header class="topbar">
@@ -24,6 +24,7 @@
     <input type="checkbox" id="aiGlobalToggle" />
     <span id="aiGlobalLabel">Modo humano global</span>
   </label>
+  <button id="btnGroups" class="btn" title="Elegir qué grupos ver en la bandeja">Grupos</button>
   <button id="btnPrompt" class="btn">Editar prompt</button>
 </header>
 
@@ -64,6 +65,21 @@
   </div>
 </div>
 
+<div id="groupsModal" class="modal hidden">
+  <div class="modal-body large">
+    <h3>Grupos de WhatsApp</h3>
+    <p style="color:#8899a6;font-size:13px;margin-top:0">Solo los grupos habilitados aparecen en la bandeja. Por defecto ninguno — actívalos para empezar a verlos.</p>
+    <input type="search" id="groupsSearch" placeholder="Filtrar por nombre…" autocomplete="off" />
+    <div id="groupsList" class="groups-list">
+      <div class="empty">Cargando…</div>
+    </div>
+    <div class="row">
+      <button id="groupsRefresh" class="btn">Recargar</button>
+      <button id="groupsClose" class="btn primary">Cerrar</button>
+    </div>
+  </div>
+</div>
+
 <div id="promptModal" class="modal hidden">
   <div class="modal-body large">
     <h3>System Prompt</h3>
@@ -76,6 +92,6 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="/app.js?v=20260513c"></script>
+<script src="/app.js?v=20260513d"></script>
 </body>
 </html>

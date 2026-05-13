@@ -144,13 +144,91 @@ async function setAiEnabled(enabled) {
   });
 }
 
+let _groupsCache = [];
+let _groupsFilter = '';
+
+async function openGroupsModal() {
+  $('groupsModal').classList.remove('hidden');
+  $('groupsSearch').value = '';
+  _groupsFilter = '';
+  await loadGroups();
+}
+
+async function loadGroups() {
+  const list = $('groupsList');
+  list.innerHTML = '<div class="empty">Cargando grupos…</div>';
+  try {
+    const r = await fetch(withTenant('/api/groups'));
+    const data = await r.json();
+    if (!r.ok) {
+      list.innerHTML = `<div class="empty">Error: ${escapeHtml(data.error || r.status)}</div>`;
+      return;
+    }
+    _groupsCache = data.groups || [];
+    renderGroups();
+  } catch (e) {
+    list.innerHTML = `<div class="empty">Error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderGroups() {
+  const list = $('groupsList');
+  const q = _groupsFilter.toLowerCase();
+  const filtered = q
+    ? _groupsCache.filter((g) => (g.name || '').toLowerCase().includes(q) || (g.jid || '').toLowerCase().includes(q))
+    : _groupsCache;
+  if (!filtered.length) {
+    list.innerHTML = '<div class="empty">No hay grupos para mostrar.</div>';
+    return;
+  }
+  list.innerHTML = filtered.map((g) => {
+    const meta = [
+      g.participantCount != null ? `${g.participantCount} miembros` : null,
+      g.hasMessages ? 'con historial' : null,
+      g.stale ? 'archivado/abandonado' : null,
+    ].filter(Boolean).join(' · ');
+    return `<div class="group-row" data-jid="${escapeHtml(g.jid)}">
+      <div class="info">
+        <div class="name">${escapeHtml(g.name)}</div>
+        <div class="meta">${escapeHtml(meta || '')}</div>
+      </div>
+      <label class="switch">
+        <input type="checkbox" data-jid="${escapeHtml(g.jid)}" ${g.enabled ? 'checked' : ''}>
+        <span class="slider"></span>
+      </label>
+    </div>`;
+  }).join('');
+}
+
+async function toggleGroup(jid, enabled) {
+  const r = await fetch('/api/groups/toggle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tenant: state.tenantId, jid, enabled }),
+  });
+  const data = await r.json();
+  if (!r.ok) {
+    alert('Error: ' + (data.error || r.status));
+    return false;
+  }
+  // Actualiza cache local
+  const g = _groupsCache.find((x) => x.jid === jid);
+  if (g) g.enabled = enabled;
+  // Sync state.config.enabledGroups para que renderChatList filtre correctamente
+  state.config.enabledGroups = data.enabledGroups || [];
+  renderChatList();
+  return true;
+}
+
 function filterConversations(convs, query) {
-  if (!query) return convs;
+  // Esconder grupos no habilitados explícitamente (los datos persisten en el server)
+  const enabled = new Set(state.config.enabledGroups || []);
+  let base = convs.filter((c) => !c.isGroup || enabled.has(c.jid));
+  if (!query) return base;
   const q = query.toLowerCase();
-  return convs.filter((c) => {
+  return base.filter((c) => {
     if ((c.name || '').toLowerCase().includes(q)) return true;
     if ((c.jid || '').toLowerCase().includes(q)) return true;
-    // Buscar en mensajes recientes (últimos 50) para que el filtro sea útil sin recorrer todo
     const recent = c.messages.slice(-50);
     for (const m of recent) {
       if ((m.text || '').toLowerCase().includes(q)) return true;
@@ -380,6 +458,17 @@ $('searchInput').addEventListener('input', (e) => {
   state.searchQuery = e.target.value.trim();
   renderChatList();
 });
+$('btnGroups').addEventListener('click', openGroupsModal);
+$('groupsClose').addEventListener('click', () => $('groupsModal').classList.add('hidden'));
+$('groupsRefresh').addEventListener('click', loadGroups);
+$('groupsSearch').addEventListener('input', (e) => { _groupsFilter = e.target.value.trim(); renderGroups(); });
+$('groupsList').addEventListener('change', async (e) => {
+  if (e.target.matches('input[type="checkbox"][data-jid]')) {
+    const jid = e.target.dataset.jid;
+    const ok = await toggleGroup(jid, e.target.checked);
+    if (!ok) e.target.checked = !e.target.checked; // revert
+  }
+});
 $('btnPrompt').addEventListener('click', () => {
   $('promptText').value = state.config.systemPrompt;
   $('promptModal').classList.remove('hidden');
@@ -406,7 +495,7 @@ socket.on('state', (snap) => {
 });
 socket.on('connection', ({ connection }) => { state.connection = connection; renderConnection(); });
 socket.on('metrics', ({ metrics }) => { state.metrics = metrics; renderMetrics(); });
-socket.on('config', ({ config }) => { state.config = config; renderAiGlobal(); });
+socket.on('config', ({ config }) => { state.config = config; renderAiGlobal(); renderChatList(); });
 socket.on('mode', ({ jid, mode }) => {
   const conv = state.conversations.find((c) => c.jid === jid);
   if (!conv) return;

@@ -263,6 +263,9 @@ export class WhatsAppSession {
     const jid = msg.key.remoteJid;
     if (!jid || jid === 'status@broadcast' || jid.endsWith('@newsletter')) return;
     const isGroup = jid.endsWith('@g.us');
+    // Filtro opt-in: solo procesa grupos explícitamente habilitados por el operador.
+    // Sin esto la bandeja se llena con todos los grupos donde está el número.
+    if (isGroup && !this.store.isGroupEnabled(jid)) return;
 
     const text = extractText(msg.message);
     const earlyMediaCheck = extractMediaInfo(msg.message);

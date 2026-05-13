@@ -33,7 +33,9 @@ export class TenantStore extends EventEmitter {
     this.contactsFile = path.join(this.dir, 'contacts.json');
 
     this.conversations = new Map();
-    this.config = { systemPrompt: DEFAULT_PROMPT, aiEnabled: true };
+    // enabledGroups: lista explícita de JIDs @g.us que el operador habilitó.
+    // Por defecto vacío → ningún grupo aparece (opt-in para evitar bandeja saturada).
+    this.config = { systemPrompt: DEFAULT_PROMPT, aiEnabled: true, enabledGroups: [] };
     this.connection = { state: 'disconnected', qr: null };
     this.meta = { tenantId, kind: meta.kind || 'local', ...meta };
     this.ghl = null;
@@ -155,6 +157,19 @@ export class TenantStore extends EventEmitter {
 
   setAiEnabled(enabled) {
     this.config.aiEnabled = !!enabled;
+    this.persistConfig().catch(() => {});
+    this.emit('config', { tenantId: this.tenantId, config: this.config });
+  }
+
+  isGroupEnabled(jid) {
+    return Array.isArray(this.config.enabledGroups) && this.config.enabledGroups.includes(jid);
+  }
+
+  setGroupEnabled(jid, enabled) {
+    const current = Array.isArray(this.config.enabledGroups) ? this.config.enabledGroups : [];
+    const set = new Set(current);
+    if (enabled) set.add(jid); else set.delete(jid);
+    this.config.enabledGroups = Array.from(set);
     this.persistConfig().catch(() => {});
     this.emit('config', { tenantId: this.tenantId, config: this.config });
   }

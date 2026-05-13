@@ -340,6 +340,63 @@ export function startServer(port = 3000) {
     } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
   });
 
+  // Lista todos los grupos en los que el número está, con estado enabled del operador.
+  // Combina sock.groupFetchAllParticipating (live de WA) con grupos ya conocidos en
+  // conversaciones locales (por si la query live no los devuelve).
+  app.get('/api/groups', async (req, res) => {
+    try {
+      const t = getTenant(req);
+      const session = tenants.session(t.tenantId);
+      if (!session?.sock) return res.status(503).json({ error: 'Sesión WhatsApp no conectada' });
+      const enabled = new Set(t.config.enabledGroups || []);
+      const known = new Map();
+      // Live: groups donde está el número actual
+      try {
+        const live = await session.sock.groupFetchAllParticipating();
+        for (const [jid, md] of Object.entries(live || {})) {
+          known.set(jid, {
+            jid,
+            name: md.subject || jid,
+            participantCount: (md.participants || []).length,
+            enabled: enabled.has(jid),
+            hasMessages: t.conversations.has(jid),
+          });
+        }
+      } catch (e) {
+        console.warn(`[/api/groups] groupFetchAllParticipating falló: ${e.message}`);
+      }
+      // Conversaciones locales con jid @g.us que no aparecieron en live (grupos archivados/abandonados)
+      for (const [jid, conv] of t.conversations) {
+        if (!jid.endsWith('@g.us') || known.has(jid)) continue;
+        known.set(jid, {
+          jid,
+          name: conv.name || jid,
+          participantCount: null,
+          enabled: enabled.has(jid),
+          hasMessages: true,
+          stale: true, // ya no está activo en WA
+        });
+      }
+      const groups = Array.from(known.values()).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      res.json({ groups });
+    } catch (e) {
+      res.status(e.status || 500).json({ error: e.message });
+    }
+  });
+
+  app.post('/api/groups/toggle', (req, res) => {
+    try {
+      const t = getTenant(req);
+      const { jid, enabled } = req.body || {};
+      if (!jid || !jid.endsWith('@g.us')) return res.status(400).json({ error: 'jid de grupo requerido (@g.us)' });
+      if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled (boolean) requerido' });
+      t.setGroupEnabled(jid, enabled);
+      res.json({ ok: true, enabled, enabledGroups: t.config.enabledGroups });
+    } catch (e) {
+      res.status(e.status || 500).json({ error: e.message });
+    }
+  });
+
   // Provisiona (o re-provisiona si force=true) el Conversation Provider del tenant.
   // Útil para sub-accounts conectadas antes del fix multi-tenant.
   app.post('/api/ghl/provision-provider', async (req, res) => {
