@@ -7,6 +7,7 @@ body {
   height: 100vh;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 .topbar {
   display: flex;
@@ -68,8 +69,11 @@ body.embed .topbar { padding:8px 16px; }
 }
 .sidebar {
   border-right: 1px solid #2a3744;
-  overflow-y: auto;
   background: #131b24;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 .sidebar h2 {
   margin: 0;
@@ -79,8 +83,26 @@ body.embed .topbar { padding:8px 16px; }
   letter-spacing: 0.5px;
   color: #8899a6;
   border-bottom: 1px solid #2a3744;
+  flex-shrink: 0;
 }
-.sidebar ul { list-style: none; margin: 0; padding: 0; }
+.sidebar .search {
+  padding: 8px 12px;
+  border-bottom: 1px solid #2a3744;
+  flex-shrink: 0;
+}
+.sidebar .search input {
+  width: 100%;
+  background: #0f1419;
+  color: #e7e9ea;
+  border: 1px solid #2a3744;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 13px;
+  box-sizing: border-box;
+}
+.sidebar .search input:focus { outline: none; border-color: #1d9bf0; }
+.sidebar ul { list-style: none; margin: 0; padding: 0; flex: 1; overflow-y: auto; min-height: 0; }
+.sidebar .empty-search { padding: 24px 16px; text-align: center; font-size: 13px; color: #5b6b7a; }
 .sidebar li {
   padding: 10px 16px;
   border-bottom: 1px solid #1c2630;
@@ -94,7 +116,9 @@ body.embed .topbar { padding:8px 16px; }
 .sidebar .mode-badge { background: #243240; padding: 1px 6px; border-radius: 8px; }
 .sidebar .mode-badge.human { background: #5a3a14; color: #ffb300; }
 
-.chat { display: flex; flex-direction: column; min-width: 0; }
+.chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; overflow: hidden; }
+.chat-header { flex-shrink: 0; }
+.composer { flex-shrink: 0; }
 .chat-header {
   display: flex;
   align-items: center;

@@ -14,6 +14,7 @@ const state = {
   ghl: null,
   metrics: null,
   activeJid: null,
+  searchQuery: '',
 };
 
 const $ = (id) => document.getElementById(id);
@@ -143,10 +144,31 @@ async function setAiEnabled(enabled) {
   });
 }
 
+function filterConversations(convs, query) {
+  if (!query) return convs;
+  const q = query.toLowerCase();
+  return convs.filter((c) => {
+    if ((c.name || '').toLowerCase().includes(q)) return true;
+    if ((c.jid || '').toLowerCase().includes(q)) return true;
+    // Buscar en mensajes recientes (últimos 50) para que el filtro sea útil sin recorrer todo
+    const recent = c.messages.slice(-50);
+    for (const m of recent) {
+      if ((m.text || '').toLowerCase().includes(q)) return true;
+      if (m.senderName && m.senderName.toLowerCase().includes(q)) return true;
+    }
+    return false;
+  });
+}
+
 function renderChatList() {
   const list = $('chatList');
   list.innerHTML = '';
-  for (const conv of state.conversations) {
+  const filtered = filterConversations(state.conversations, state.searchQuery);
+  if (state.searchQuery && filtered.length === 0) {
+    list.innerHTML = '<li class="empty-search" style="cursor:default">Sin resultados</li>';
+    return;
+  }
+  for (const conv of filtered) {
     const li = document.createElement('li');
     if (conv.jid === state.activeJid) li.classList.add('active');
     const last = conv.messages[conv.messages.length - 1];
@@ -354,6 +376,10 @@ $('aiGlobalToggle').addEventListener('change', (e) => setAiEnabled(!e.target.che
 $('manualSend').addEventListener('click', sendManual);
 $('manualInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendManual(); });
 $('manualFile').addEventListener('change', (e) => stageFile(e.target.files?.[0] || null));
+$('searchInput').addEventListener('input', (e) => {
+  state.searchQuery = e.target.value.trim();
+  renderChatList();
+});
 $('btnPrompt').addEventListener('click', () => {
   $('promptText').value = state.config.systemPrompt;
   $('promptModal').classList.remove('hidden');
