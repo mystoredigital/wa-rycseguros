@@ -64,7 +64,22 @@ class RateLimiter {
   }
 }
 
-function extractText(message) {
+// Desenvuelve wrappers comunes: ephemeralMessage, viewOnceMessage(V2),
+// documentWithCaptionMessage, editedMessage. Recursivo para casos anidados.
+function unwrapMessage(message) {
+  if (!message) return message;
+  const wrappers = [
+    'ephemeralMessage', 'viewOnceMessage', 'viewOnceMessageV2', 'viewOnceMessageV2Extension',
+    'documentWithCaptionMessage', 'editedMessage', 'messageContextInfo',
+  ];
+  for (const w of wrappers) {
+    if (message[w]?.message) return unwrapMessage(message[w].message);
+  }
+  return message;
+}
+
+function extractText(rawMessage) {
+  const message = unwrapMessage(rawMessage);
   if (!message) return '';
   return (
     message.conversation ||
@@ -76,8 +91,9 @@ function extractText(message) {
   );
 }
 
-// Detecta media en un message proto, devuelve null si no hay.
-function extractMediaInfo(message) {
+// Detecta media en un message proto (manejando wrappers). Devuelve null si no hay.
+function extractMediaInfo(rawMessage) {
+  const message = unwrapMessage(rawMessage);
   if (!message) return null;
   if (message.imageMessage)
     return { type: 'image', mimetype: message.imageMessage.mimetype || 'image/jpeg' };
@@ -233,6 +249,10 @@ export class WhatsAppSession {
         this.store.addMessage(jid, { role: 'system', text: `⚠️ Falló descarga de media: ${e.message}` });
         return null;
       });
+    } else if (!mediaInfo && !text.trim()) {
+      // Diagnóstico: ningún tipo conocido — log las keys top-level para descubrir wrappers nuevos
+      const inner = unwrapMessage(msg.message);
+      console.log(`[wa:${this.store.tenantId}] mensaje sin tipo conocido. raw keys: ${Object.keys(msg.message || {})} · unwrapped keys: ${Object.keys(inner || {})}`);
     }
 
     // Si no hay texto y tampoco se logró subir media → ignora (mensajes solo-sticker con upload fallido)
@@ -329,7 +349,10 @@ export class WhatsAppSession {
   // Descarga la media del mensaje Baileys y la sube a R2.
   // Devuelve { url, mimetype, type, fileName? } o lanza.
   async _processIncomingMedia(msg, info) {
-    const buffer = await downloadMediaMessage(msg, 'buffer', {}, { logger });
+    // downloadMediaMessage necesita el mensaje con la estructura {key, message: <inner>},
+    // donde inner es el message ya desenvuelto.
+    const unwrappedMsg = { key: msg.key, message: unwrapMessage(msg.message) };
+    const buffer = await downloadMediaMessage(unwrappedMsg, 'buffer', {}, { logger });
     if (!buffer || !buffer.length) throw new Error('buffer vacío');
     const { ext, waType } = mimeToWa(info.mimetype);
     const uploaded = await uploadBufferToR2(buffer, {
@@ -337,6 +360,7 @@ export class WhatsAppSession {
       extension: info.fileName ? info.fileName.split('.').pop() : ext,
       prefix: `wa/${this.store.tenantId}`,
     });
+    console.log(`[media:${this.store.tenantId}] uploaded ${info.type} ${buffer.length}b → ${uploaded.url}`);
     return {
       url: uploaded.url,
       mimetype: info.mimetype,
