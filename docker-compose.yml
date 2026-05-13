@@ -1,4 +1,21 @@
 services:
+  whisper:
+    # ASR sidecar — API OpenAI-compatible para transcribir voice notes inbound.
+    # CPU build, modelo small (multi-idioma, buen español). El cache vive en
+    # ../files/whisper-cache para que la imagen no se redescargue al redeploy.
+    image: fedirz/faster-whisper-server:latest-cpu
+    container_name: whatsapp-agent-whisper
+    restart: unless-stopped
+    networks:
+      - dokploy-network
+    volumes:
+      - ../files/whisper-cache:/root/.cache/huggingface
+    environment:
+      WHISPER__MODEL: Systran/faster-whisper-small
+      WHISPER__INFERENCE_DEVICE: cpu
+      WHISPER__COMPUTE_TYPE: int8
+      DEFAULT_LANGUAGE: es
+
   app:
     build:
       context: .
@@ -6,6 +23,8 @@ services:
     image: whatsapp-agent-mystore:latest
     container_name: whatsapp-agent-mystore
     restart: unless-stopped
+    depends_on:
+      - whisper
     networks:
       - dokploy-network
     volumes:
@@ -45,6 +64,10 @@ services:
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID}
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY}
       R2_PUBLIC_URL: ${R2_PUBLIC_URL}
+      # Whisper local
+      WHISPER_URL: ${WHISPER_URL}
+      WHISPER_MODEL: ${WHISPER_MODEL}
+      WHISPER_LANGUAGE: ${WHISPER_LANGUAGE}
     labels:
       - traefik.enable=true
       - traefik.http.routers.whatsapp-agent-mystore.entrypoints=websecure

@@ -13,6 +13,7 @@ import { generateReply } from './ai.js';
 import { GHLClient } from './ghl/client.js';
 import { resolvePhoneAndJid, jidToPhone } from './ghl/phone.js';
 import { uploadBufferToR2, downloadUrlToBuffer, mimeToWa, isMediaConfigured } from './media.js';
+import { transcribeAudio, isWhisperConfigured } from './whisper.js';
 
 const logger = pino({ level: 'warn' });
 
@@ -241,8 +242,9 @@ export class WhatsAppSession {
         });
       }
 
+      const fromMeEffective = text.trim() || fromMeAttachment?.transcription || '';
       this.store.addMessage(jid, {
-        role: 'assistant', manual: true, text,
+        role: 'assistant', manual: true, text: fromMeEffective,
         ...(fromMeAttachment ? { attachment: fromMeAttachment } : {}),
       });
       const current = this.store.getOrCreateConversation(jid);
@@ -253,7 +255,7 @@ export class WhatsAppSession {
       const fromMeResolved = resolvePhoneAndJid(msg);
       if (fromMeResolved?.phone) {
         this._pushOperatorToGHL({
-          jid, phone: fromMeResolved.phone, text,
+          jid, phone: fromMeResolved.phone, text: fromMeEffective,
           attachments: fromMeAttachment ? [fromMeAttachment.url] : [],
         }).catch((e) => console.error(`[ghl:${this.store.tenantId}] push fromMe`, e.message));
       }
@@ -283,16 +285,20 @@ export class WhatsAppSession {
     // Si no hay texto y tampoco se logró subir media → ignora (mensajes solo-sticker con upload fallido)
     if (!text.trim() && !attachment) return;
 
+    // Texto efectivo: caption si existe, si no transcripción del audio. Es lo que ven la IA
+    // y GHL en el cuerpo del mensaje; el audio queda como attachment al lado.
+    const effectiveText = text.trim() || attachment?.transcription || '';
+
     const conv = this.store.addMessage(
       jid,
-      { role: 'user', text, ...(attachment ? { attachment } : {}) },
+      { role: 'user', text: effectiveText, ...(attachment ? { attachment } : {}) },
       name
     );
 
     // Mirror a GHL si el tenant está conectado Y tenemos teléfono real
     if (resolved?.phone) {
       this._pushInboundToGHL({
-        jid, phone: resolved.phone, text, name, altId: msg.key.id,
+        jid, phone: resolved.phone, text: effectiveText, name, altId: msg.key.id,
         attachments: attachment ? [attachment.url] : [],
       }).catch((e) => {
         console.error(`[ghl:${this.store.tenantId}] push inbound`, e.message);
@@ -304,9 +310,9 @@ export class WhatsAppSession {
 
     if (conv.mode !== 'ai') return;
 
-    // Media-only (sin texto ni caption): IA no puede procesar imágenes/audio aún,
-    // dejamos que el operador conteste manualmente desde el dashboard o GHL.
-    if (!text.trim()) return;
+    // Si no hay texto efectivo (ni caption ni transcripción) → IA no procesa imágenes/docs
+    // por ahora; deja que el operador conteste manualmente.
+    if (!effectiveText) return;
 
     // Kill switch global: si el operador pausó la IA para todo el tenant, saltar
     // sin tocar el modo per-chat (cuando se reactive, el flujo vuelve a su estado).
@@ -372,7 +378,7 @@ export class WhatsAppSession {
   }
 
   // Descarga la media del mensaje Baileys y la sube a R2.
-  // Devuelve { url, mimetype, type, fileName? } o lanza.
+  // Para voice/audio además transcribe con Whisper. Devuelve attachment dict o lanza.
   async _processIncomingMedia(msg, info) {
     // downloadMediaMessage necesita el mensaje con la estructura {key, message: <inner>},
     // donde inner es el message ya desenvuelto.
@@ -386,7 +392,8 @@ export class WhatsAppSession {
       prefix: `wa/${this.store.tenantId}`,
     });
     console.log(`[media:${this.store.tenantId}] uploaded ${info.type} ${buffer.length}b → ${uploaded.url}`);
-    return {
+
+    const attachment = {
       url: uploaded.url,
       mimetype: info.mimetype,
       type: info.type || waType,
@@ -394,6 +401,23 @@ export class WhatsAppSession {
       ...(info.ptt ? { ptt: true } : {}),
       ...(info.seconds ? { seconds: info.seconds } : {}),
     };
+
+    // Transcribir si es voice/audio y Whisper está configurado
+    if ((info.type === 'voice' || info.type === 'audio') && isWhisperConfigured()) {
+      try {
+        const startedAt = Date.now();
+        const transcription = await transcribeAudio(buffer, { mimetype: info.mimetype });
+        const ms = Date.now() - startedAt;
+        if (transcription) {
+          attachment.transcription = transcription;
+          console.log(`[whisper:${this.store.tenantId}] transcrito ${ms}ms (${transcription.length}c): ${transcription.slice(0, 80)}${transcription.length > 80 ? '…' : ''}`);
+        }
+      } catch (e) {
+        console.error(`[whisper:${this.store.tenantId}]`, e.message);
+      }
+    }
+
+    return attachment;
   }
 
   async _pushInboundToGHL({ jid, phone, text, name, altId, attachments }) {

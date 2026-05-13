@@ -195,7 +195,7 @@ function renderMessages() {
 function renderBubbleBody(m) {
   let html = '';
   if (m.attachment && m.attachment.url) {
-    const { url, type, mimetype, fileName } = m.attachment;
+    const { url, type, mimetype, fileName, transcription } = m.attachment;
     const safeUrl = escapeHtml(url);
     if (type === 'image' || type === 'sticker') {
       html += `<img src="${safeUrl}" alt="" loading="lazy">`;
@@ -203,12 +203,18 @@ function renderBubbleBody(m) {
       html += `<video src="${safeUrl}" controls preload="metadata"></video>`;
     } else if (type === 'audio' || type === 'voice') {
       html += `<audio src="${safeUrl}" controls preload="metadata"></audio>`;
+      if (transcription) {
+        html += `<div class="transcription">🎙 ${escapeHtml(transcription)}</div>`;
+      }
     } else {
       html += `<a class="doc-link" href="${safeUrl}" target="_blank" rel="noopener">${escapeHtml(fileName || mimetype || 'archivo')}</a>`;
     }
-  }
-  if (m.text && m.text.trim()) {
-    html += `<div class="caption">${escapeHtml(m.text)}</div>`;
+    // Si el texto coincide con la transcripción, evitamos duplicarlo abajo
+    if (m.text && m.text.trim() && m.text !== transcription) {
+      html += `<div class="caption">${escapeHtml(m.text)}</div>`;
+    }
+  } else if (m.text && m.text.trim()) {
+    html += `<div>${escapeHtml(m.text)}</div>`;
   }
   return html;
 }
