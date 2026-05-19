@@ -9,7 +9,7 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <link rel="manifest" href="/site.webmanifest" />
-<link rel="stylesheet" href="/style.css?v=20260513f" />
+<link rel="stylesheet" href="/style.css?v=20260520a" />
 </head>
 <body>
 <header class="topbar">
@@ -48,12 +48,21 @@
     </header>
     <div class="messages" id="messages"></div>
     <footer class="composer">
-      <label class="attach-btn" title="Adjuntar archivo">
-        <input type="file" id="manualFile" hidden accept="image/*,video/*,audio/*,application/pdf,application/*" />
-        <span id="attachIcon">📎</span>
-      </label>
-      <input type="text" id="manualInput" placeholder="Mensaje manual (modo humano)…" disabled />
-      <button id="manualSend" class="btn primary" disabled>Enviar</button>
+      <div id="replyContextBar" class="reply-context hidden">
+        <div class="reply-content">
+          <div class="reply-label">Respondiendo a <span id="replyContextAuthor"></span></div>
+          <div class="reply-text" id="replyContextText"></div>
+        </div>
+        <button id="replyContextCancel" type="button" class="reply-cancel" title="Cancelar (Esc)">✕</button>
+      </div>
+      <div class="composer-row">
+        <label class="attach-btn" title="Adjuntar archivo">
+          <input type="file" id="manualFile" hidden accept="image/*,video/*,audio/*,application/pdf,application/*" />
+          <span id="attachIcon">📎</span>
+        </label>
+        <input type="text" id="manualInput" placeholder="Mensaje manual (modo humano)…" disabled />
+        <button id="manualSend" class="btn primary" disabled>Enviar</button>
+      </div>
     </footer>
   </section>
 </main>
@@ -115,6 +124,6 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="/app.js?v=20260513f"></script>
+<script src="/app.js?v=20260520a"></script>
 </body>
 </html>

@@ -155,6 +155,10 @@ export class WhatsAppSession {
     this._sentByUs = new Set();
     this._limiter = new RateLimiter();
     this._groupNameCache = new Map();
+    // Cache de protos {key, message} indexado por stanzaId — Baileys necesita el
+    // proto original para construir un quote (sendMessage({ quoted })). LRU bounded.
+    this._msgCache = new Map();
+    this._msgCacheMax = 300;
     this.metrics = {
       sent: 0,
       skippedRateLimit: 0,
@@ -200,6 +204,47 @@ export class WhatsAppSession {
     if (!messageId) return;
     this._sentByUs.add(messageId);
     setTimeout(() => this._sentByUs.delete(messageId), 5 * 60_000);
+  }
+
+  // Cachea un proto {key, message} para poder citarlo después. LRU FIFO.
+  // Desenvolvemos wrappers (ephemeralMessage, viewOnceMessage, etc.) — Baileys
+  // espera el inner cuando lo usamos como `quoted` en sendMessage.
+  _cacheMsg(m) {
+    if (!m?.key?.id || !m?.message) return;
+    const inner = unwrapMessage(m.message);
+    if (this._msgCache.has(m.key.id)) this._msgCache.delete(m.key.id); // re-insertar para refrescar orden
+    this._msgCache.set(m.key.id, { key: m.key, message: inner });
+    if (this._msgCache.size > this._msgCacheMax) {
+      const oldest = this._msgCache.keys().next().value;
+      this._msgCache.delete(oldest);
+    }
+  }
+
+  // Construye metadata para guardar localmente y mostrar en dashboard. Prefiere el
+  // proto cacheado; si no está, busca en la conv para que el dashboard siga viendo
+  // la cita aunque WA no la renderice nativa (e.g. tras reinicio del server).
+  _quotedMetaFor(jid, stanzaId) {
+    if (!stanzaId) return null;
+    const cached = this._msgCache.get(stanzaId);
+    if (cached) {
+      return {
+        stanzaId,
+        participant: cached.key?.participant || null,
+        text: extractText(cached.message) || '',
+        mediaType: extractMediaInfo(cached.message)?.type || null,
+      };
+    }
+    const conv = this.store.conversations.get(jid);
+    const m = conv?.messages.find((mm) => mm.id === stanzaId);
+    if (m) {
+      return {
+        stanzaId,
+        participant: m.senderJid || null,
+        text: m.text || '',
+        mediaType: m.attachment?.type || null,
+      };
+    }
+    return null;
   }
 
   // Marca un messageId como "ya enviado por nosotros" para evitar loops cuando
@@ -303,8 +348,10 @@ export class WhatsAppSession {
 
       const fromMeEffective = text.trim() || fromMeAttachment?.transcription || '';
       const fromMeQuoted = extractQuotedInfo(msg.message);
+      this._cacheMsg(msg);
       this.store.addMessage(jid, {
         role: 'assistant', manual: true, text: fromMeEffective, numberId: this.numberId,
+        id: msg.key.id,
         ...(fromMeAttachment ? { attachment: fromMeAttachment } : {}),
         ...(fromMeQuoted ? { quoted: fromMeQuoted } : {}),
       });
@@ -361,12 +408,16 @@ export class WhatsAppSession {
     // Detectar quote (reply a un mensaje anterior)
     const quoted = extractQuotedInfo(msg.message);
 
+    // Cachear el proto para que el operador pueda citar este mensaje desde el dashboard
+    this._cacheMsg(msg);
+
     const conv = this.store.addMessage(
       jid,
       {
         role: 'user',
         text: effectiveText,
         numberId: this.numberId,
+        id: msg.key.id,
         ...(attachment ? { attachment } : {}),
         ...(isGroup ? { senderName, senderJid } : {}),
         ...(quoted ? { quoted } : {}),
@@ -439,9 +490,10 @@ export class WhatsAppSession {
         if (elapsed < target) await sleep(target - elapsed);
         const sent = await this.sock.sendMessage(jid, { text: reply });
         this._rememberSentByUs(sent?.key?.id);
+        this._cacheMsg(sent);
         this._limiter.record(jid);
         this._bump('sent');
-        this.store.addMessage(jid, { role: 'assistant', text: reply, numberId: this.numberId });
+        this.store.addMessage(jid, { role: 'assistant', text: reply, numberId: this.numberId, id: sent?.key?.id });
         this.store.noteNumberForJid(jid, this.numberId);
         // Mirror la respuesta de IA a GHL como inbound del lado business
         if (resolved?.phone) {
@@ -535,11 +587,11 @@ export class WhatsAppSession {
   // Mensajes del operador originados FUERA de GHL (desde dashboard local o desde
   // el celular vinculado) — los mirroreamos a GHL para que el operador trabajando
   // en GHL Conversations vea el hilo completo.
-  async _pushOperatorToGHL({ jid, phone, text, attachments }) {
-    return this._pushAssistantToGHL({ jid, phone, text, attachments, prefix: '👤 ' });
+  async _pushOperatorToGHL({ jid, phone, text, attachments, quotedText }) {
+    return this._pushAssistantToGHL({ jid, phone, text, attachments, prefix: '👤 ', quotedText });
   }
 
-  async _pushAssistantToGHL({ jid, phone, text, attachments, prefix = '' }) {
+  async _pushAssistantToGHL({ jid, phone, text, attachments, prefix = '', quotedText = '' }) {
     if (!this.store.ghl?.accessToken) return;
     const providerId = this.store.ghl.conversationProviderId || process.env.GHL_CONVERSATION_PROVIDER_ID;
     if (!providerId) return;
@@ -553,7 +605,10 @@ export class WhatsAppSession {
       if (contactId) this.store.linkContact(contactId, jid);
     }
     if (!contactId) return;
-    const message = (text || '').trim() ? `${prefix}${text}` : prefix.trim();
+    // Prepend quote prefix (GHL no soporta quotes nativos) — formato: ↪ "<text>"\n<msg>
+    const quoteLine = quotedText ? `↪ "${quotedText.slice(0, 160)}"\n` : '';
+    const body = (text || '').trim();
+    const message = body ? `${quoteLine}${prefix}${body}` : `${quoteLine}${prefix}`.trim();
     await ghl.sendInboundMessage({
       contactId,
       message,
@@ -564,16 +619,25 @@ export class WhatsAppSession {
 
   async send(jid, text, opts = {}) {
     if (!this.sock) throw new Error('WhatsApp no conectado');
-    const sent = await this.sock.sendMessage(jid, { text });
+    const quotedMeta = this._quotedMetaFor(jid, opts.quotedStanzaId);
+    const quotedProto = opts.quotedStanzaId ? this._msgCache.get(opts.quotedStanzaId) : null;
+    const payload = { text };
+    if (quotedProto) payload.quoted = quotedProto;
+    const sent = await this.sock.sendMessage(jid, payload);
     this._rememberSentByUs(sent?.key?.id);
-    this.store.addMessage(jid, { role: 'assistant', text, manual: true, numberId: this.numberId });
+    this._cacheMsg(sent);
+    this.store.addMessage(jid, {
+      role: 'assistant', text, manual: true, numberId: this.numberId,
+      id: sent?.key?.id,
+      ...(quotedMeta ? { quoted: quotedMeta } : {}),
+    });
     this.store.noteNumberForJid(jid, this.numberId);
     if (opts.skipGhlMirror) return;
     if (jid.endsWith('@g.us')) return; // grupos son local-only, no se mirorean a GHL
     // Mensaje originado fuera de GHL (dashboard) → mirroreamos para que aparezca en GHL Conversations
     const phone = jidToPhone(jid);
     if (phone) {
-      this._pushOperatorToGHL({ jid, phone, text }).catch((e) =>
+      this._pushOperatorToGHL({ jid, phone, text, quotedText: quotedMeta?.text || '' }).catch((e) =>
         console.error(`[ghl:${this._tag}] push manual`, e.message)
       );
     }
@@ -593,19 +657,25 @@ export class WhatsAppSession {
     else if (waType === 'video') payload = { ...base, video: buffer, mimetype: finalMime };
     else if (waType === 'audio') payload = { audio: buffer, mimetype: finalMime, ptt: !!ptt };
     else payload = { document: buffer, mimetype: finalMime, fileName: fileName || 'file' };
+    const quotedMeta = this._quotedMetaFor(jid, opts.quotedStanzaId);
+    const quotedProto = opts.quotedStanzaId ? this._msgCache.get(opts.quotedStanzaId) : null;
+    if (quotedProto) payload.quoted = quotedProto;
     const sent = await this.sock.sendMessage(jid, payload);
     this._rememberSentByUs(sent?.key?.id);
+    this._cacheMsg(sent);
     this.store.addMessage(jid, {
       role: 'assistant', manual: true, numberId: this.numberId,
       text: caption || '',
+      id: sent?.key?.id,
       attachment: { url, mimetype: finalMime, type: waType, ...(fileName ? { fileName } : {}), ...(ptt ? { ptt: true } : {}) },
+      ...(quotedMeta ? { quoted: quotedMeta } : {}),
     });
     this.store.noteNumberForJid(jid, this.numberId);
     if (opts.skipGhlMirror) return;
     if (jid.endsWith('@g.us')) return; // grupos local-only
     const phone = jidToPhone(jid);
     if (phone) {
-      this._pushOperatorToGHL({ jid, phone, text: caption || '', attachments: [url] }).catch((e) =>
+      this._pushOperatorToGHL({ jid, phone, text: caption || '', attachments: [url], quotedText: quotedMeta?.text || '' }).catch((e) =>
         console.error(`[ghl:${this._tag}] push manual media`, e.message)
       );
     }

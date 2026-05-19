@@ -218,12 +218,14 @@ body.embed .topbar { padding:8px 16px; }
 
 .composer {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   padding: 12px 20px;
   border-top: 1px solid #2a3744;
   background: #16202a;
 }
-.composer input {
+.composer-row { display: flex; gap: 8px; align-items: center; }
+.composer input[type="text"] {
   flex: 1;
   background: #0f1419;
   color: #e7e9ea;
@@ -231,6 +233,74 @@ body.embed .topbar { padding:8px 16px; }
   border-radius: 6px;
   padding: 8px 12px;
   font-size: 14px;
+}
+
+.reply-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #1a2530;
+  border-left: 3px solid #1d9bf0;
+  border-radius: 4px;
+}
+.reply-context.hidden { display: none; }
+.reply-context .reply-content { flex: 1; min-width: 0; }
+.reply-context .reply-label {
+  font-size: 10px;
+  color: #1d9bf0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  font-weight: 600;
+}
+.reply-context .reply-label #replyContextAuthor { color: #8899a6; font-weight: 500; text-transform: none; letter-spacing: 0; }
+.reply-context .reply-text {
+  font-size: 13px;
+  color: #c0cdd9;
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.reply-cancel {
+  background: transparent;
+  color: #8899a6;
+  border: 0;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  line-height: 1;
+}
+.reply-cancel:hover { color: #f44336; background: rgba(244,67,54,0.1); }
+
+.bubble { position: relative; }
+.bubble .reply-btn {
+  position: absolute;
+  top: -10px;
+  right: -8px;
+  background: #243240;
+  border: 1px solid #2f4150;
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  cursor: pointer;
+  color: #c0cdd9;
+  padding: 0;
+  line-height: 1;
+}
+.bubble:hover .reply-btn { display: inline-flex; }
+.bubble .reply-btn:hover { color: #1d9bf0; border-color: #1d9bf0; background: #1a2530; }
+.bubble.failed { border: 1px dashed #f44336; opacity: 0.85; }
+.bubble .failed-tag {
+  font-size: 11px;
+  color: #f44336;
+  margin-top: 6px;
+  font-weight: 500;
 }
 
 .modal {

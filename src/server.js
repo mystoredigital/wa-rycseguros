@@ -472,13 +472,13 @@ export function startServer(port = 3000) {
   app.post('/api/send', async (req, res) => {
     try {
       const t = getTenant(req);
-      const { jid, text, numberId } = req.body || {};
+      const { jid, text, numberId, quotedStanzaId } = req.body || {};
       if (!jid || !text) return res.status(400).json({ error: 'jid y text requeridos' });
       const session = numberId
         ? tenants.session(t.tenantId, numberId)
         : tenants.sessionForJid(t.tenantId, jid);
       if (!session) return res.status(404).json({ error: 'sin sesión disponible para este chat' });
-      await session.send(jid, text);
+      await session.send(jid, text, { quotedStanzaId });
       res.json({ ok: true, numberId: session.numberId });
     } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
   });
@@ -509,11 +509,12 @@ export function startServer(port = 3000) {
       });
 
       const numberId = parts.fields.numberId;
+      const quotedStanzaId = parts.fields.quotedStanzaId || null;
       const session = numberId
         ? tenants.session(t.tenantId, numberId)
         : tenants.sessionForJid(t.tenantId, jid);
       if (!session) return res.status(404).json({ error: 'sin sesión disponible para este chat' });
-      await session.sendMedia(jid, { url: uploaded.url, mimetype, fileName: file.filename, caption });
+      await session.sendMedia(jid, { url: uploaded.url, mimetype, fileName: file.filename, caption }, { quotedStanzaId });
       res.json({ ok: true, url: uploaded.url, numberId: session.numberId });
     } catch (e) {
       console.error('[send-media]', e);
@@ -678,7 +679,8 @@ export function startServer(port = 3000) {
     // Routing multi-número: usa el número que último interactuó con este contacto.
     const session = tenants.sessionForJid(locationId, jid);
     if (!session) return console.warn(`[webhook outbound] session ${locationId} no existe`);
-    console.log(`[webhook outbound] enviando vía número '${session.numberId}'`);
+    const isNewConv = !tenant.conversations.has(jid);
+    console.log(`[webhook outbound] enviando vía número '${session.numberId}'${isNewConv ? ' (conv nueva para este jid)' : ''}`);
 
     session.markOutboundSent(messageId);
 
@@ -714,9 +716,20 @@ export function startServer(port = 3000) {
       }
     }
     console.error(`[webhook outbound] dropped tras ${delays.length + 1} intentos: ${lastErr?.message}`);
+    // Grabamos el mensaje del operador localmente aunque falle la entrega, para que
+    // el dashboard NO quede desincronizado vs GHL Conversations. Antes solo se
+    // añadía un system bubble con el error — el contenido se "perdía" para la app.
+    const firstAttachmentUrl = hasMedia
+      ? (typeof attachments[0] === 'string' ? attachments[0] : attachments[0]?.url)
+      : null;
+    tenant.addMessage(jid, {
+      role: 'assistant', manual: true, fromGhl: true, deliveryFailed: true,
+      text: message || '',
+      ...(firstAttachmentUrl ? { attachment: { url: firstAttachmentUrl, type: 'document' } } : {}),
+    });
     tenant.addMessage(jid, {
       role: 'system',
-      text: `⚠️ Mensaje desde GHL no entregado tras ${delays.length + 1} intentos: ${lastErr?.message || 'desconocido'}\nContenido: ${message || '(solo media)'}`,
+      text: `⚠️ No entregado a WhatsApp tras ${delays.length + 1} intentos: ${lastErr?.message || 'desconocido'}`,
     });
   });
 

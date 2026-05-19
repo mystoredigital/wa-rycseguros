@@ -16,6 +16,7 @@ const state = {
   metrics: null,
   activeJid: null,
   searchQuery: '',
+  replyContext: null, // { stanzaId, text, mediaType, senderName }
 };
 
 const $ = (id) => document.getElementById(id);
@@ -405,15 +406,57 @@ function renderMessages() {
 
   for (const m of conv.messages) {
     const div = document.createElement('div');
-    div.className = `bubble ${m.manual ? 'manual' : m.role}`;
+    const failedClass = m.deliveryFailed ? ' failed' : '';
+    div.className = `bubble ${m.manual ? 'manual' : m.role}${failedClass}`;
     // En grupos, el remitente va en una línea pequeña arriba del bubble
     const senderTag = (conv.isGroup && m.role === 'user' && m.senderName)
       ? `<div class="sender">${escapeHtml(m.senderName)}</div>`
       : '';
-    div.innerHTML = senderTag + renderBubbleBody(m) + `<span class="time">${fmtTime(m.ts)}</span>`;
+    // Botón citar — solo en mensajes con stanzaId (los anteriores al deploy de Sprint 4.5 no lo tendrán)
+    const replyBtn = m.id
+      ? `<button class="reply-btn" data-stanza-id="${escapeHtml(m.id)}" title="Citar este mensaje" type="button">↪</button>`
+      : '';
+    const failedTag = m.deliveryFailed
+      ? `<div class="failed-tag">⚠ No entregado a WhatsApp</div>`
+      : '';
+    div.innerHTML = senderTag + renderBubbleBody(m) + failedTag + `<span class="time">${fmtTime(m.ts)}</span>` + replyBtn;
     wrap.appendChild(div);
   }
   wrap.scrollTop = wrap.scrollHeight;
+}
+
+function setReplyContext(stanzaId, msg, conv) {
+  const senderName = conv?.isGroup && msg.senderName
+    ? msg.senderName
+    : (msg.role === 'user' ? (conv?.name || '') : 'Tú');
+  state.replyContext = {
+    stanzaId,
+    text: (msg.text || '').trim(),
+    mediaType: msg.attachment?.type || null,
+    senderName,
+  };
+  renderReplyContext();
+  $('manualInput')?.focus();
+}
+
+function clearReplyContext() {
+  if (!state.replyContext) return;
+  state.replyContext = null;
+  renderReplyContext();
+}
+
+function renderReplyContext() {
+  const bar = $('replyContextBar');
+  if (!bar) return;
+  const c = state.replyContext;
+  if (!c) { bar.classList.add('hidden'); return; }
+  const preview = c.text
+    ? c.text.slice(0, 200)
+    : (c.mediaType ? `[${c.mediaType}]` : '(mensaje)');
+  const authorEl = $('replyContextAuthor');
+  if (authorEl) authorEl.textContent = c.senderName ? `· ${c.senderName}` : '';
+  $('replyContextText').textContent = preview;
+  bar.classList.remove('hidden');
 }
 
 function renderBubbleBody(m) {
@@ -464,6 +507,7 @@ function escapeHtml(s) {
 
 function selectChat(jid) {
   state.activeJid = jid;
+  clearReplyContext();
   renderChatList();
   renderMessages();
 }
@@ -495,6 +539,7 @@ async function sendManual() {
   const text = $('manualInput').value.trim();
   if (!text && !_stagedFile) return;
 
+  const quotedStanzaId = state.replyContext?.stanzaId || null;
   const sendBtn = $('manualSend');
   sendBtn.disabled = true;
   try {
@@ -503,6 +548,7 @@ async function sendManual() {
       fd.append('tenant', state.tenantId);
       fd.append('jid', state.activeJid);
       if (text) fd.append('caption', text);
+      if (quotedStanzaId) fd.append('quotedStanzaId', quotedStanzaId);
       fd.append('file', _stagedFile);
       const r = await fetch(`/api/send-media?tenant=${encodeURIComponent(state.tenantId)}`, { method: 'POST', body: fd });
       if (!r.ok) {
@@ -516,10 +562,14 @@ async function sendManual() {
       await fetch('/api/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ tenant: state.tenantId, jid: state.activeJid, text }),
+        body: JSON.stringify({
+          tenant: state.tenantId, jid: state.activeJid, text,
+          ...(quotedStanzaId ? { quotedStanzaId } : {}),
+        }),
       });
     }
     $('manualInput').value = '';
+    clearReplyContext();
   } finally {
     sendBtn.disabled = false;
   }
@@ -579,7 +629,21 @@ function on(id, evt, fn) {
 on('modeToggle', 'change', (e) => state.activeJid && setMode(state.activeJid, e.target.checked ? 'human' : 'ai'));
 on('aiGlobalToggle', 'change', (e) => setAiEnabled(!e.target.checked));
 on('manualSend', 'click', sendManual);
-on('manualInput', 'keydown', (e) => { if (e.key === 'Enter') sendManual(); });
+on('manualInput', 'keydown', (e) => {
+  if (e.key === 'Enter') sendManual();
+  else if (e.key === 'Escape') clearReplyContext();
+});
+on('messages', 'click', (e) => {
+  const btn = e.target.closest('.reply-btn[data-stanza-id]');
+  if (!btn) return;
+  const stanzaId = btn.dataset.stanzaId;
+  const conv = state.conversations.find((c) => c.jid === state.activeJid);
+  if (!conv) return;
+  const msg = conv.messages.find((m) => m.id === stanzaId);
+  if (!msg) return;
+  setReplyContext(stanzaId, msg, conv);
+});
+on('replyContextCancel', 'click', clearReplyContext);
 on('manualFile', 'change', (e) => stageFile(e.target.files?.[0] || null));
 on('searchInput', 'input', (e) => {
   state.searchQuery = e.target.value.trim();
