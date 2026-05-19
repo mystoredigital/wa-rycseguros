@@ -9,7 +9,7 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <link rel="manifest" href="/site.webmanifest" />
-<link rel="stylesheet" href="/style.css?v=20260520a" />
+<link rel="stylesheet" href="/style.css?v=20260520b" />
 </head>
 <body>
 <header class="topbar">
@@ -41,10 +41,13 @@
   <section class="chat">
     <header class="chat-header">
       <div id="chatTitle">Selecciona un chat</div>
-      <label class="toggle">
-        <input type="checkbox" id="modeToggle" />
-        <span>Modo humano</span>
-      </label>
+      <div class="chat-header-actions">
+        <label class="toggle">
+          <input type="checkbox" id="modeToggle" />
+          <span>Modo humano</span>
+        </label>
+        <button id="btnMergeConv" class="btn-icon" title="Combinar esta conversación con otra (mismo contacto bajo distinto JID)" type="button" disabled>⋮</button>
+      </div>
     </header>
     <div class="messages" id="messages"></div>
     <footer class="composer">
@@ -112,6 +115,24 @@
   </div>
 </div>
 
+<div id="mergeModal" class="modal hidden">
+  <div class="modal-body large">
+    <h3>Combinar conversaciones</h3>
+    <p style="color:#8899a6;font-size:13px;margin-top:0">
+      Une dos chats que correspondan al mismo contacto (aparecen duplicados típicamente cuando WhatsApp usa <code>@lid</code> + <code>@s.whatsapp.net</code> para el mismo número).
+      Los mensajes se combinan ordenados por fecha y el chat origen se elimina. <strong>No se puede deshacer.</strong>
+    </p>
+    <div id="mergeTargetInfo" class="merge-target"></div>
+    <input type="search" id="mergeSearch" placeholder="Filtrar conversaciones…" autocomplete="off" />
+    <div id="mergeList" class="merge-list">
+      <div class="empty">Selecciona un chat primero.</div>
+    </div>
+    <div class="row">
+      <button id="mergeCancel" class="btn">Cancelar</button>
+    </div>
+  </div>
+</div>
+
 <div id="promptModal" class="modal hidden">
   <div class="modal-body large">
     <h3>System Prompt</h3>
@@ -124,6 +145,6 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="/app.js?v=20260520a"></script>
+<script src="/app.js?v=20260520b"></script>
 </body>
 </html>

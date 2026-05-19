@@ -33,6 +33,7 @@ export class TenantStore extends EventEmitter {
     this.contactsFile = path.join(this.dir, 'contacts.json');
     this.numbersFile = path.join(this.dir, 'numbers.json');
     this.numbersAuthRoot = path.join(this.dir, 'auth'); // para nuevos numberId
+    this.phoneIndexFile = path.join(this.dir, 'phone-index.json');
 
     this.conversations = new Map();
     // enabledGroups: lista explícita de JIDs @g.us que el operador habilitó.
@@ -48,6 +49,9 @@ export class TenantStore extends EventEmitter {
     this.numbers = new Map();
     // Routing outbound: jid → numberId del último mensaje recibido en/enviado por ese chat
     this.lastNumberByJid = new Map();
+    // Dedup contactos: phone (E.164 con +) → JID canónico. Anti-duplicación cuando
+    // el mismo contacto aparece bajo @lid (inbound) y @s.whatsapp.net (outbound del celular).
+    this.phoneIndex = new Map();
   }
 
   async load() {
@@ -78,6 +82,13 @@ export class TenantStore extends EventEmitter {
       for (const [contactId, jid] of Object.entries(map)) {
         this.jidByContactId.set(contactId, jid);
         this.contactIdByJid.set(jid, contactId);
+      }
+    } catch {}
+
+    try {
+      const raw = await fs.readFile(this.phoneIndexFile, 'utf8');
+      for (const [phone, jid] of Object.entries(JSON.parse(raw))) {
+        this.phoneIndex.set(phone, jid);
       }
     } catch {}
 
@@ -126,6 +137,79 @@ export class TenantStore extends EventEmitter {
     this.jidByContactId.set(contactId, jid);
     this.contactIdByJid.set(jid, contactId);
     fs.writeFile(this.contactsFile, JSON.stringify(Object.fromEntries(this.jidByContactId), null, 2)).catch(() => {});
+  }
+
+  // Devuelve el JID canónico (primero registrado) para un teléfono, o null si no se conoce.
+  canonicalJidForPhone(phone) {
+    if (!phone) return null;
+    return this.phoneIndex.get(phone) || null;
+  }
+
+  // Registra un teléfono→jid. Si ya existe un canónico para ese phone y es distinto,
+  // NO sobreescribe (preserva el primero visto). El operador puede combinar manualmente.
+  registerPhone(jid, phone) {
+    if (!phone || !jid) return;
+    const existing = this.phoneIndex.get(phone);
+    if (existing === jid) return;
+    if (existing && existing !== jid) {
+      console.warn(`[phoneIndex:${this.tenantId}] ${phone} ya mapeado a ${existing}, nuevo intento: ${jid} (ignorado — usa merge para deduplicar)`);
+      return;
+    }
+    this.phoneIndex.set(phone, jid);
+    fs.writeFile(this.phoneIndexFile, JSON.stringify(Object.fromEntries(this.phoneIndex), null, 2)).catch(() => {});
+  }
+
+  // Combina dos conversaciones del mismo contacto. Une mensajes ordenados por ts,
+  // mantiene el conv destino, elimina el origen. Redirige contactIdByJid y phoneIndex.
+  // Pensado para limpiar duplicados que aparecen cuando WhatsApp da JIDs distintos
+  // al mismo número (típico con @lid vs @s.whatsapp.net).
+  async mergeConversations(fromJid, toJid) {
+    if (!fromJid || !toJid) throw new Error('fromJid y toJid requeridos');
+    if (fromJid === toJid) throw new Error('jids iguales — nada que combinar');
+    const from = this.conversations.get(fromJid);
+    const to = this.conversations.get(toJid);
+    if (!from) throw new Error(`conv ${fromJid} no existe`);
+    if (!to) throw new Error(`conv ${toJid} no existe`);
+    if (from.isGroup !== to.isGroup) throw new Error('no se pueden combinar grupo + 1:1');
+
+    const merged = [...to.messages, ...from.messages].sort((a, b) => (a.ts || 0) - (b.ts || 0));
+    to.messages = merged.length > 200 ? merged.slice(-200) : merged;
+    to.updatedAt = Date.now();
+    // Adoptar nombre real si el destino tiene un fallback feo
+    const toHasRealName = to.name && !/^\+?\d{6,}$/.test(to.name);
+    const fromHasRealName = from.name && !/^\+?\d{6,}$/.test(from.name);
+    if (!toHasRealName && fromHasRealName) to.name = from.name;
+    // Si el origen estaba en modo humano, propagar (más conservador)
+    if (from.mode === 'human') to.mode = 'human';
+
+    // Redirigir contactIdByJid
+    for (const [cid, j] of [...this.jidByContactId.entries()]) {
+      if (j === fromJid) {
+        this.jidByContactId.set(cid, toJid);
+        this.contactIdByJid.delete(fromJid);
+        this.contactIdByJid.set(toJid, cid);
+      }
+    }
+    // Redirigir lastNumberByJid si el origen tiene asignación
+    if (this.lastNumberByJid.has(fromJid) && !this.lastNumberByJid.has(toJid)) {
+      this.lastNumberByJid.set(toJid, this.lastNumberByJid.get(fromJid));
+    }
+    this.lastNumberByJid.delete(fromJid);
+    // Redirigir phoneIndex: cualquier phone que apunte a fromJid → toJid
+    for (const [phone, j] of [...this.phoneIndex.entries()]) {
+      if (j === fromJid) this.phoneIndex.set(phone, toJid);
+    }
+
+    this.conversations.delete(fromJid);
+
+    await this.persistConversations().catch(() => {});
+    await fs.writeFile(this.contactsFile, JSON.stringify(Object.fromEntries(this.jidByContactId), null, 2)).catch(() => {});
+    await this.persistNumbers().catch(() => {});
+    await fs.writeFile(this.phoneIndexFile, JSON.stringify(Object.fromEntries(this.phoneIndex), null, 2)).catch(() => {});
+
+    this.emit('message', { tenantId: this.tenantId, jid: toJid, conversation: to });
+    this.emit('conv:removed', { tenantId: this.tenantId, jid: fromJid, mergedInto: toJid });
+    return to;
   }
 
   getJidByContactId(contactId) {

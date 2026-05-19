@@ -348,32 +348,41 @@ export class WhatsAppSession {
 
       const fromMeEffective = text.trim() || fromMeAttachment?.transcription || '';
       const fromMeQuoted = extractQuotedInfo(msg.message);
+      const fromMeResolved = isGroup ? null : resolvePhoneAndJid(msg);
+      // Anti-duplicación: si el teléfono ya tiene un JID canónico distinto (caso típico:
+      // contacto entrante apareció antes como @lid), redirigimos al canónico para no
+      // crear "Anlly" + "573504486462" como conversaciones separadas.
+      const fromMeCanonical = this.store.canonicalJidForPhone(fromMeResolved?.phone);
+      const fromMeKey = (fromMeCanonical && fromMeCanonical !== jid) ? fromMeCanonical : jid;
       this._cacheMsg(msg);
-      this.store.addMessage(jid, {
+      this.store.addMessage(fromMeKey, {
         role: 'assistant', manual: true, text: fromMeEffective, numberId: this.numberId,
         id: msg.key.id,
         ...(fromMeAttachment ? { attachment: fromMeAttachment } : {}),
         ...(fromMeQuoted ? { quoted: fromMeQuoted } : {}),
       });
-      this.store.noteNumberForJid(jid, this.numberId);
-      const current = this.store.getOrCreateConversation(jid);
-      if (current.mode !== 'human') this.store.setMode(jid, 'human');
+      this.store.noteNumberForJid(fromMeKey, this.numberId);
+      if (fromMeResolved?.phone) this.store.registerPhone(fromMeKey, fromMeResolved.phone);
+      const current = this.store.getOrCreateConversation(fromMeKey);
+      if (current.mode !== 'human') this.store.setMode(fromMeKey, 'human');
 
       // Mirror a GHL solo en 1:1 (grupos son local-only).
-      if (!isGroup) {
-        const fromMeResolved = resolvePhoneAndJid(msg);
-        if (fromMeResolved?.phone) {
-          this._pushOperatorToGHL({
-            jid, phone: fromMeResolved.phone, text: fromMeEffective,
-            attachments: fromMeAttachment ? [fromMeAttachment.url] : [],
-          }).catch((e) => console.error(`[ghl:${this.store.tenantId}] push fromMe`, e.message));
-        }
+      if (!isGroup && fromMeResolved?.phone) {
+        this._pushOperatorToGHL({
+          jid: fromMeKey, phone: fromMeResolved.phone, text: fromMeEffective,
+          attachments: fromMeAttachment ? [fromMeAttachment.url] : [],
+        }).catch((e) => console.error(`[ghl:${this.store.tenantId}] push fromMe`, e.message));
       }
       return;
     }
 
     // Resolver teléfono real (manejando LID mode) — null para grupos
     const resolved = isGroup ? null : resolvePhoneAndJid(msg);
+
+    // Anti-duplicación 1:1: si ya tenemos un canónico para este teléfono y es distinto
+    // del jid actual, redirigimos. Para grupos no aplica (cada grupo es su propio jid).
+    const canonical = isGroup ? null : this.store.canonicalJidForPhone(resolved?.phone);
+    const effectiveJid = (canonical && canonical !== jid) ? canonical : jid;
 
     // En grupos, name de la conv es el subject del grupo (ya seteado arriba),
     // y los mensajes individuales llevan senderName/senderJid del que escribió.
@@ -412,7 +421,7 @@ export class WhatsAppSession {
     this._cacheMsg(msg);
 
     const conv = this.store.addMessage(
-      jid,
+      effectiveJid,
       {
         role: 'user',
         text: effectiveText,
@@ -424,16 +433,17 @@ export class WhatsAppSession {
       },
       name
     );
-    this.store.noteNumberForJid(jid, this.numberId);
+    this.store.noteNumberForJid(effectiveJid, this.numberId);
+    if (!isGroup && resolved?.phone) this.store.registerPhone(effectiveJid, resolved.phone);
 
     // Mirror a GHL si el tenant está conectado Y tenemos teléfono real (NO grupos — local-only)
     if (!isGroup && resolved?.phone) {
       this._pushInboundToGHL({
-        jid, phone: resolved.phone, text: effectiveText, name, altId: msg.key.id,
+        jid: effectiveJid, phone: resolved.phone, text: effectiveText, name, altId: msg.key.id,
         attachments: attachment ? [attachment.url] : [],
       }).catch((e) => {
         console.error(`[ghl:${this.store.tenantId}] push inbound`, e.message);
-        this.store.addMessage(jid, { role: 'system', text: `⚠️ Push GHL falló: ${e.message}` });
+        this.store.addMessage(effectiveJid, { role: 'system', text: `⚠️ Push GHL falló: ${e.message}` });
       });
     } else if (!isGroup && this.store.ghl?.accessToken) {
       console.warn(`[wa:${this.store.tenantId}] jid sin teléfono resoluble: ${jid}`);
@@ -470,15 +480,17 @@ export class WhatsAppSession {
       return;
     }
 
-    const limit = this._limiter.check(jid);
+    const limit = this._limiter.check(effectiveJid);
     if (!limit.ok) {
-      console.warn(`[wa:${this.store.tenantId}] rate limit (${limit.reason}): skip ${jid}`);
+      console.warn(`[wa:${this.store.tenantId}] rate limit (${limit.reason}): skip ${effectiveJid}`);
       this._bump('skippedRateLimit');
       return;
     }
 
     try {
       const startedAt = Date.now();
+      // Para sock.sendMessage usamos `jid` (el que Baileys recibió). Para storage y
+      // GHL usamos `effectiveJid` (canónico) para mantener una sola conversación.
       await this.sock.sendPresenceUpdate('composing', jid);
       const reply = await generateReply({
         systemPrompt: this.store.config.systemPrompt,
@@ -491,15 +503,15 @@ export class WhatsAppSession {
         const sent = await this.sock.sendMessage(jid, { text: reply });
         this._rememberSentByUs(sent?.key?.id);
         this._cacheMsg(sent);
-        this._limiter.record(jid);
+        this._limiter.record(effectiveJid);
         this._bump('sent');
-        this.store.addMessage(jid, { role: 'assistant', text: reply, numberId: this.numberId, id: sent?.key?.id });
-        this.store.noteNumberForJid(jid, this.numberId);
+        this.store.addMessage(effectiveJid, { role: 'assistant', text: reply, numberId: this.numberId, id: sent?.key?.id });
+        this.store.noteNumberForJid(effectiveJid, this.numberId);
         // Mirror la respuesta de IA a GHL como inbound del lado business
         if (resolved?.phone) {
-          this._pushAIReplyToGHL({ jid, phone: resolved.phone, text: reply }).catch((e) => {
+          this._pushAIReplyToGHL({ jid: effectiveJid, phone: resolved.phone, text: reply }).catch((e) => {
             console.error(`[ghl:${this.store.tenantId}] push reply`, e.message);
-            this.store.addMessage(jid, { role: 'system', text: `⚠️ Push reply GHL falló: ${e.message}` });
+            this.store.addMessage(effectiveJid, { role: 'system', text: `⚠️ Push reply GHL falló: ${e.message}` });
           });
         }
       }

@@ -303,6 +303,69 @@ body.embed .topbar { padding:8px 16px; }
   font-weight: 500;
 }
 
+.chat-header-actions { display: flex; align-items: center; gap: 12px; }
+.btn-icon {
+  background: #243240;
+  color: #c0cdd9;
+  border: 1px solid #2f4150;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+  font-size: 16px;
+  line-height: 1;
+}
+.btn-icon:hover { background: #2d3e4f; color: #e7e9ea; }
+.btn-icon:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.merge-target { margin-bottom: 12px; }
+.merge-current {
+  padding: 10px 12px;
+  background: #5a3a14;
+  border: 1px solid #ffb300;
+  border-radius: 6px;
+}
+.merge-current-label { font-size: 10px; color: #ffb300; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+.merge-current-name { font-weight: 500; font-size: 14px; margin-top: 4px; }
+.merge-current-jid { font-size: 11px; color: #c0cdd9; font-family: ui-monospace, Menlo, monospace; margin-top: 2px; }
+
+#mergeSearch {
+  width: 100%;
+  background: #0f1419;
+  color: #e7e9ea;
+  border: 1px solid #2a3744;
+  border-radius: 6px;
+  padding: 8px 10px;
+  font-size: 13px;
+  box-sizing: border-box;
+  margin-bottom: 12px;
+}
+#mergeSearch:focus { outline: none; border-color: #1d9bf0; }
+
+.merge-list { max-height: 50vh; overflow-y: auto; border: 1px solid #2a3744; border-radius: 6px; }
+.merge-list .empty { text-align: center; color: #5b6b7a; padding: 24px; font-size: 13px; }
+.merge-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-bottom: 1px solid #1c2630;
+  background: transparent;
+  border-left: 0;
+  border-right: 0;
+  border-top: 0;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+  color: #e7e9ea;
+}
+.merge-row:last-child { border-bottom: 0; }
+.merge-row:hover { background: #1a2530; }
+.merge-row-info { flex: 1; min-width: 0; }
+.merge-row-name { font-weight: 500; font-size: 14px; }
+.merge-row-jid { font-size: 11px; color: #5b6b7a; font-family: ui-monospace, Menlo, monospace; margin-top: 2px; }
+.merge-row-preview { font-size: 12px; color: #8899a6; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.merge-row-action { font-size: 12px; color: #1d9bf0; font-weight: 500; white-space: nowrap; }
+
 .modal {
   position: fixed;
   inset: 0;

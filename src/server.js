@@ -326,6 +326,16 @@ export function startServer(port = 3000) {
     } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
   });
 
+  app.post('/api/conversations/merge', async (req, res) => {
+    try {
+      const t = getTenant(req);
+      const { fromJid, toJid } = req.body || {};
+      if (!fromJid || !toJid) return res.status(400).json({ error: 'fromJid y toJid requeridos' });
+      const conv = await t.mergeConversations(fromJid, toJid);
+      res.json({ ok: true, conversation: conv });
+    } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  });
+
   app.post('/api/mode', (req, res) => {
     try {
       const t = getTenant(req);
@@ -786,7 +796,7 @@ export function startServer(port = 3000) {
     });
   });
 
-  for (const ev of ['message', 'mode', 'config', 'connection', 'metrics']) {
+  for (const ev of ['message', 'mode', 'config', 'connection', 'metrics', 'conv:removed']) {
     tenants.on(ev, (payload) => {
       io.to(`tenant:${payload.tenantId}`).emit(ev, payload);
     });

@@ -319,6 +319,74 @@ async function removeNumber(numberId) {
   await loadNumbers();
 }
 
+let _mergeFilter = '';
+
+function openMergeModal() {
+  const conv = state.conversations.find((c) => c.jid === state.activeJid);
+  if (!conv) return;
+  $('mergeModal').classList.remove('hidden');
+  $('mergeSearch').value = '';
+  _mergeFilter = '';
+  const info = $('mergeTargetInfo');
+  if (info) {
+    info.innerHTML = `<div class="merge-current">
+      <div class="merge-current-label">Chat origen (se eliminará)</div>
+      <div class="merge-current-name">${escapeHtml(displayName(conv))}</div>
+      <div class="merge-current-jid">${escapeHtml(conv.jid)}</div>
+    </div>`;
+  }
+  renderMergeList();
+}
+
+function renderMergeList() {
+  const list = $('mergeList');
+  const source = state.conversations.find((c) => c.jid === state.activeJid);
+  if (!source) return;
+  const candidates = state.conversations.filter((c) =>
+    c.jid !== source.jid && c.isGroup === source.isGroup
+  );
+  const q = _mergeFilter.toLowerCase();
+  const filtered = q
+    ? candidates.filter((c) =>
+        (c.name || '').toLowerCase().includes(q) ||
+        (c.jid || '').toLowerCase().includes(q))
+    : candidates;
+  if (!filtered.length) {
+    list.innerHTML = '<div class="empty">No hay otros chats compatibles.</div>';
+    return;
+  }
+  list.innerHTML = filtered.map((c) => {
+    const last = c.messages[c.messages.length - 1];
+    const preview = last ? (last.text || '').slice(0, 50) : '(sin mensajes)';
+    return `<button class="merge-row" data-target-jid="${escapeHtml(c.jid)}" type="button">
+      <div class="merge-row-info">
+        <div class="merge-row-name">${escapeHtml(displayName(c))}</div>
+        <div class="merge-row-jid">${escapeHtml(c.jid)}</div>
+        <div class="merge-row-preview">${escapeHtml(preview)}</div>
+      </div>
+      <div class="merge-row-action">Combinar →</div>
+    </button>`;
+  }).join('');
+}
+
+async function performMerge(toJid) {
+  const fromJid = state.activeJid;
+  if (!fromJid || !toJid) return;
+  const source = state.conversations.find((c) => c.jid === fromJid);
+  const target = state.conversations.find((c) => c.jid === toJid);
+  if (!confirm(`Combinar "${displayName(source)}" en "${displayName(target)}"?\n\nLos mensajes se uirán y el chat origen ("${displayName(source)}") se eliminará. No se puede deshacer.`)) return;
+  const r = await fetch('/api/conversations/merge', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ tenant: state.tenantId, fromJid, toJid }),
+  });
+  const data = await r.json();
+  if (!r.ok) { alert('Error: ' + (data.error || r.status)); return; }
+  $('mergeModal').classList.add('hidden');
+  state.activeJid = toJid;
+  await loadState(); // refresca todo
+}
+
 async function toggleGroup(jid, enabled) {
   const r = await fetch('/api/groups/toggle', {
     method: 'POST',
@@ -387,6 +455,8 @@ function renderMessages() {
   const wrap = $('messages');
   wrap.innerHTML = '';
   const conv = state.conversations.find((c) => c.jid === state.activeJid);
+  const mergeBtn = $('btnMergeConv');
+  if (mergeBtn) mergeBtn.disabled = !conv;
   if (!conv) {
     $('chatTitle').textContent = 'Selecciona un chat';
     $('modeToggle').checked = false;
@@ -644,6 +714,14 @@ on('messages', 'click', (e) => {
   setReplyContext(stanzaId, msg, conv);
 });
 on('replyContextCancel', 'click', clearReplyContext);
+on('btnMergeConv', 'click', openMergeModal);
+on('mergeCancel', 'click', () => $('mergeModal').classList.add('hidden'));
+on('mergeSearch', 'input', (e) => { _mergeFilter = e.target.value.trim(); renderMergeList(); });
+on('mergeList', 'click', (e) => {
+  const row = e.target.closest('.merge-row[data-target-jid]');
+  if (!row) return;
+  performMerge(row.dataset.targetJid);
+});
 on('manualFile', 'change', (e) => stageFile(e.target.files?.[0] || null));
 on('searchInput', 'input', (e) => {
   state.searchQuery = e.target.value.trim();
@@ -726,6 +804,12 @@ socket.on('message', ({ conversation }) => {
   state.conversations.sort((a, b) => b.updatedAt - a.updatedAt);
   renderChatList();
   if (conversation.jid === state.activeJid) renderMessages();
+});
+socket.on('conv:removed', ({ jid, mergedInto }) => {
+  state.conversations = state.conversations.filter((c) => c.jid !== jid);
+  if (state.activeJid === jid) state.activeJid = mergedInto || null;
+  renderChatList();
+  renderMessages();
 });
 socket.on('tenant:added', () => loadTenants());
 
