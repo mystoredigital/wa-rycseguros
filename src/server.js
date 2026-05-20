@@ -687,11 +687,22 @@ export function startServer(port = 3000) {
     res.json({ ok: true, service: 'whatsapp-agent-mystore', endpoint: 'ghl-outbound' });
   });
 
+  // Quita los prefijos de eco "👤 " (operador) o "🤖 " (IA) que NOSOTROS añadimos
+  // al pushear a GHL. Si vienen de vuelta vía /webhooks/ghl/outbound es porque el
+  // mensaje del thread se duplicó o el operador copió texto con el prefijo.
+  // Sin esta limpieza el contacto vería "👤 hola" en WhatsApp y el dashboard
+  // mostraría burbujas duplicadas con el icono.
+  function stripGhlEchoPrefix(text) {
+    if (!text || typeof text !== 'string') return text;
+    return text.replace(/^(?:👤|🤖)\s+/, '');
+  }
+
   app.post('/webhooks/ghl/outbound', async (req, res) => {
     // GHL → nosotros cuando el operador escribe en la UI de Conversations.
     // Payload típico: { type, locationId, contactId, messageId, message, phone, attachments, userId }
     const body = req.body || {};
-    const { locationId, contactId, phone, message, messageId, attachments } = body;
+    const { locationId, contactId, phone, messageId, attachments } = body;
+    const message = stripGhlEchoPrefix(body.message);
     const hasMedia = Array.isArray(attachments) && attachments.length > 0;
     console.log(`[webhook outbound] location=${locationId} contact=${contactId} phone=${phone} msgId=${messageId} attachments=${hasMedia ? attachments.length : 0}`);
 

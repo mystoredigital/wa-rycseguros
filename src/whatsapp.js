@@ -373,6 +373,15 @@ export class WhatsAppSession {
           attachments: fromMeAttachment ? [fromMeAttachment.url] : [],
         }).catch((e) => console.error(`[ghl:${this.store.tenantId}] push fromMe`, e.message));
       }
+
+      // El operador respondió desde el celular → ya leyó los pendientes en ese chat.
+      // Limpiamos unreadCount local y propagamos read a GHL. skipWa: el celular ya
+      // mandó el read receipt; reenviar desde aquí sería redundante.
+      if (!isGroup) {
+        this.markRead(fromMeKey, { skipWa: true }).catch((e) =>
+          console.warn(`[wa:${this._tag}] auto-markRead tras fromMe: ${e.message}`)
+        );
+      }
       return;
     }
 

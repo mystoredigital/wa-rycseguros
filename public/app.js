@@ -501,7 +501,11 @@ function renderMessages() {
   for (const m of conv.messages) {
     const div = document.createElement('div');
     const failedClass = m.deliveryFailed ? ' failed' : '';
-    div.className = `bubble ${m.manual ? 'manual' : m.role}${failedClass}`;
+    // Mantenemos el rol (user/assistant/system) para la alineación y añadimos
+    // 'manual' como modificador de color. Antes usábamos solo 'manual' y los
+    // mensajes del operador caían a la izquierda por falta de align-self.
+    const manualClass = m.manual ? ' manual' : '';
+    div.className = `bubble ${m.role}${manualClass}${failedClass}`;
     // En grupos, el remitente va en una línea pequeña arriba del bubble
     const senderTag = (conv.isGroup && m.role === 'user' && m.senderName)
       ? `<div class="sender">${escapeHtml(m.senderName)}</div>`
