@@ -803,17 +803,28 @@ export function startServer(port = 3000) {
 
   app.get('/api/debug/ghl-webhooks', (_req, res) => res.json({ events: _ghlWebhookLog }));
 
+  // GET validation: GHL puede validar el URL con GET antes de aceptarlo
+  app.get('/webhooks/ghl', (_req, res) => res.json({ ok: true, service: 'whatsapp-agent-mystore', endpoint: 'ghl-events' }));
+
   // Webhook genérico de eventos (ContactCreate, OutboundMessage, etc.).
-  // GHL firma estos con x-wh-signature (RSA-SHA256) — el guard valida cuando
-  // GHL_WEBHOOK_PUBLIC_KEY está set. NO aplica a /webhooks/ghl/outbound porque
-  // el Conversation Provider outbound NO viene firmado por GHL.
-  app.post('/webhooks/ghl', ghlWebhookGuard, (req, res) => {
+  // NOTA: el guard de firma está temporalmente DESHABILITADO para diagnóstico —
+  // queremos registrar todo lo que llega aunque la firma falle, para descubrir
+  // si GHL está enviando algo. Re-activar cuando el sync esté funcionando.
+  app.post('/webhooks/ghl', (req, res) => {
     const body = req.body || {};
     const type = body.type;
-    // Captura completa para inspección posterior; útil para descubrir el shape real
-    // que GHL envía (los nombres de campos varían según versión de la doc).
-    recordGhlWebhook({ type, body });
-    console.log(`[webhook ghl] type=${type} location=${body.locationId} keys=${Object.keys(body).join(',')}`);
+    const sigHeader = req.headers['x-wh-signature'] || null;
+    const altSig = req.headers['x-ghl-signature'] || null;
+    // Captura completa para inspección posterior — incluye headers para ver si
+    // GHL está firmando o no, y qué nombres de campos usa en el payload real.
+    recordGhlWebhook({
+      type, body,
+      hasSignature: !!sigHeader,
+      hasAltSignature: !!altSig,
+      userAgent: req.headers['user-agent'] || null,
+      keys: Object.keys(body),
+    });
+    console.log(`[webhook ghl] type=${type} location=${body.locationId} sig=${sigHeader ? 'present' : 'MISSING'} keys=${Object.keys(body).join(',')}`);
     res.json({ ok: true });
 
     // Dirección inversa de read sync: cuando alguien marca un chat como leído en
