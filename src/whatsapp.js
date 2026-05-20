@@ -730,9 +730,10 @@ export class WhatsAppSession {
     if (!opts.skipWa && this.sock) {
       // Limitamos a últimos 50 para no spamear si la conv es muy vieja
       const recent = newlyRead.slice(-50);
+      let cachedHits = 0;
       const keys = recent.map((m) => {
         const cached = this._msgCache.get(m.id);
-        if (cached?.key) return cached.key;
+        if (cached?.key) { cachedHits++; return cached.key; }
         // Fallback si la key no está cacheada (e.g. reinicio del server entre
         // recibir el mensaje y marcarlo leído)
         return {
@@ -742,23 +743,29 @@ export class WhatsAppSession {
           ...(m.senderJid ? { participant: m.senderJid } : {}),
         };
       }).filter((k) => k.id);
+      console.log(`[wa:${this._tag}] markRead jid=${jid} keys=${keys.length} cachedHits=${cachedHits}`);
       if (keys.length) {
-        await this.sock.readMessages(keys).catch((e) =>
-          console.warn(`[wa:${this._tag}] readMessages falló (${keys.length} keys): ${e.message}`)
-        );
+        try {
+          await this.sock.readMessages(keys);
+          console.log(`[wa:${this._tag}] readMessages OK (${keys.length} keys)`);
+        } catch (e) {
+          console.warn(`[wa:${this._tag}] readMessages falló (${keys.length} keys): ${e.message}`);
+        }
       }
     }
 
     if (!opts.skipGhl && this.store.ghl?.accessToken) {
+      const withGhlId = newlyRead.filter((m) => m.ghlMessageId);
+      const withoutGhlId = newlyRead.length - withGhlId.length;
+      console.log(`[ghl:${this.store.tenantId}] markRead → GHL: ${withGhlId.length} con ghlMessageId, ${withoutGhlId} sin ghlMessageId (mensajes pre-deploy)`);
       const ghlClient = new GHLClient(this.store);
       // Disparamos en paralelo; no esperamos a que terminen todas para responder.
       // Errores individuales se loggean pero no bloquean al operador.
       Promise.allSettled(
-        newlyRead
-          .filter((m) => m.ghlMessageId)
-          .map((m) => ghlClient.updateMessageStatus(m.ghlMessageId, 'read')
-            .catch((e) => console.warn(`[ghl:${this.store.tenantId}] updateStatus ${m.ghlMessageId}: ${e.message}`))
-          )
+        withGhlId.map((m) => ghlClient.updateMessageStatus(m.ghlMessageId, 'read')
+          .then(() => console.log(`[ghl:${this.store.tenantId}] read OK msg=${m.ghlMessageId}`))
+          .catch((e) => console.warn(`[ghl:${this.store.tenantId}] updateStatus ${m.ghlMessageId}: ${e.message}`))
+        )
       );
     }
 

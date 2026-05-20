@@ -793,6 +793,16 @@ export function startServer(port = 3000) {
     }
   });
 
+  // Ring buffer en memoria de los últimos webhooks GHL recibidos.
+  // Expuesto vía GET /api/debug/ghl-webhooks para diagnosticar sin SSH.
+  const _ghlWebhookLog = [];
+  function recordGhlWebhook(entry) {
+    _ghlWebhookLog.unshift({ ts: Date.now(), ...entry });
+    if (_ghlWebhookLog.length > 50) _ghlWebhookLog.length = 50;
+  }
+
+  app.get('/api/debug/ghl-webhooks', (_req, res) => res.json({ events: _ghlWebhookLog }));
+
   // Webhook genérico de eventos (ContactCreate, OutboundMessage, etc.).
   // GHL firma estos con x-wh-signature (RSA-SHA256) — el guard valida cuando
   // GHL_WEBHOOK_PUBLIC_KEY está set. NO aplica a /webhooks/ghl/outbound porque
@@ -800,33 +810,45 @@ export function startServer(port = 3000) {
   app.post('/webhooks/ghl', ghlWebhookGuard, (req, res) => {
     const body = req.body || {};
     const type = body.type;
-    console.log('[webhook ghl] type:', type, 'location:', body.locationId);
+    // Captura completa para inspección posterior; útil para descubrir el shape real
+    // que GHL envía (los nombres de campos varían según versión de la doc).
+    recordGhlWebhook({ type, body });
+    console.log(`[webhook ghl] type=${type} location=${body.locationId} keys=${Object.keys(body).join(',')}`);
     res.json({ ok: true });
 
     // Dirección inversa de read sync: cuando alguien marca un chat como leído en
     // GHL Conversations, queremos reflejarlo en la app y mandar doble-check azul
-    // al contacto vía WA. GHL emite ConversationUnreadUpdate cuando el unreadCount
-    // cambia (read o nuevo mensaje). Filtramos por unreadCount=0 → fue marcado leído.
-    if (type === 'ConversationUnreadUpdate') {
+    // al contacto vía WA. Aceptamos varios nombres de evento por defensividad.
+    if (type === 'ConversationUnreadUpdate' || type === 'ConversationRead' || type === 'MessageRead') {
       handleGhlReadUpdate(body).catch((e) => console.error('[webhook ghl read]', e.message));
     }
   });
 
   async function handleGhlReadUpdate(body) {
-    const { locationId, contactId, conversationId, unreadCount } = body;
-    if (!locationId) return;
-    // Solo nos interesa cuando bajó a 0 (lectura). Si subió, fue un mensaje nuevo
-    // que ya manejamos por otro lado.
-    if (unreadCount !== 0 && unreadCount !== '0') return;
+    const { locationId, contactId, conversationId } = body;
+    // GHL puede mandar unreadCount como number o string. También puede haber un
+    // unread (boolean) en algunas versiones.
+    const unreadCount = body.unreadCount;
+    const unreadFlag = body.unread;
+    const isRead = (
+      unreadCount === 0 || unreadCount === '0' ||
+      unreadFlag === false || unreadFlag === 'false'
+    );
+    if (!locationId) return console.warn('[webhook ghl read] sin locationId');
+    if (!isRead) {
+      console.log(`[webhook ghl read] skip: unreadCount=${unreadCount} unread=${unreadFlag}`);
+      return;
+    }
     const tenant = tenants.get(locationId);
     if (!tenant) return console.warn(`[webhook ghl read] tenant ${locationId} no existe`);
     const jid = contactId ? tenant.getJidByContactId(contactId) : null;
     if (!jid) return console.warn(`[webhook ghl read] no se pudo resolver jid: contactId=${contactId} conversationId=${conversationId}`);
     const session = tenants.sessionForJid(locationId, jid);
     // skipGhl: no devolver la lectura a GHL (loop).
-    if (session) await session.markRead(jid, { skipGhl: true });
-    else tenant.markConversationRead(jid);
-    console.log(`[webhook ghl read] sincronizado jid=${jid} (desde GHL)`);
+    let result;
+    if (session) result = await session.markRead(jid, { skipGhl: true });
+    else { tenant.markConversationRead(jid); result = { read: 'no-session' }; }
+    console.log(`[webhook ghl read] sincronizado jid=${jid} (desde GHL) → ${JSON.stringify(result)}`);
   }
 
   // --- Socket.io ---
