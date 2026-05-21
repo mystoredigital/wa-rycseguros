@@ -12,7 +12,8 @@ body {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 16px;
+  flex-wrap: wrap;
+  gap: 12px 16px;
   padding: 12px 20px;
   background: #16202a;
   border-bottom: 1px solid #2a3744;
