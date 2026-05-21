@@ -78,7 +78,67 @@ function renderConnection() {
   } else {
     modal.classList.add('hidden');
   }
+
+  // Footer del sidebar de navegación: mismo texto/color que el status del topbar
+  const navStatus = $('navStatus');
+  if (navStatus) {
+    navStatus.textContent = el.textContent;
+    navStatus.className = `nav-footer-line status ${aggregateState}`;
+  }
 }
+
+// ---------- Nav sidebar (routing minimal) ----------
+// Cada nav-item dispara el .click() del boton oculto correspondiente del header
+// (que ya tiene su handler open*Modal registrado). Marcamos el item activo
+// mientras el modal está abierto, y volvemos al item 'inbox' al cerrarse.
+const NAV_VIEW_TO_BTN = {
+  stats: 'btnStats',
+  audit: 'btnAudit',
+  numbers: 'btnNumbers',
+  groups: 'btnGroups',
+  prompt: 'btnPrompt',
+  apikeys: 'btnApiKeys',
+  webhooks: 'btnWebhooks',
+};
+const NAV_VIEW_TO_MODAL = {
+  stats: 'statsModal',
+  audit: 'auditModal',
+  numbers: 'numbersModal',
+  groups: 'groupsModal',
+  prompt: 'promptModal',
+  apikeys: 'apiKeysModal',
+  webhooks: 'webhooksModal',
+};
+function setActiveNav(view) {
+  document.querySelectorAll('.nav-item').forEach((el) => {
+    el.classList.toggle('active', el.dataset.view === view);
+  });
+}
+function wireNav() {
+  document.querySelectorAll('.nav-item').forEach((el) => {
+    el.addEventListener('click', () => {
+      const view = el.dataset.view;
+      if (view === 'inbox') { setActiveNav('inbox'); return; }
+      const btnId = NAV_VIEW_TO_BTN[view];
+      if (btnId && $(btnId)) {
+        setActiveNav(view);
+        $(btnId).click();
+      }
+    });
+  });
+  // Cuando un modal se oculta (cualquier click en *Close), volver al item activo a 'inbox'.
+  // Detectamos cierre via MutationObserver del attribute class de cada modal.
+  const observer = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.target.classList && m.target.classList.contains('modal') && m.target.classList.contains('hidden')) {
+        const anyOpen = document.querySelector('.modal:not(.hidden)');
+        if (!anyOpen) setActiveNav('inbox');
+      }
+    }
+  });
+  document.querySelectorAll('.modal').forEach((m) => observer.observe(m, { attributes: true, attributeFilter: ['class'] }));
+}
+wireNav();
 
 async function relink() {
   if (!confirm('Cerrar la sesión actual y generar un QR nuevo?')) return;

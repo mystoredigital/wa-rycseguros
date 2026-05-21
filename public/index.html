@@ -9,29 +9,85 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <link rel="manifest" href="/site.webmanifest" />
-<link rel="stylesheet" href="/style.css?v=20260521h" />
+<link rel="stylesheet" href="/style.css?v=20260521i" />
 </head>
 <body>
+<div class="app">
+
+<nav class="nav-sidebar" id="navSidebar">
+  <div class="nav-brand">
+    <div class="nav-brand-title">My Store</div>
+    <div class="nav-brand-sub">WhatsApp Agent</div>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-title">Operación</div>
+    <button class="nav-item active" data-view="inbox" type="button">
+      <span class="nav-icon">💬</span><span>Bandeja</span>
+    </button>
+    <button class="nav-item" data-view="stats" type="button">
+      <span class="nav-icon">📊</span><span>Resumen</span>
+    </button>
+    <button class="nav-item" data-view="audit" type="button">
+      <span class="nav-icon">📝</span><span>Audit log</span>
+    </button>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-title">Configuración</div>
+    <button class="nav-item" data-view="numbers" type="button">
+      <span class="nav-icon">📱</span><span>Números</span>
+    </button>
+    <button class="nav-item" data-view="groups" type="button">
+      <span class="nav-icon">👥</span><span>Grupos</span>
+    </button>
+    <button class="nav-item" data-view="prompt" type="button">
+      <span class="nav-icon">✏️</span><span>Editar prompt</span>
+    </button>
+  </div>
+
+  <div class="nav-section">
+    <div class="nav-title">Integraciones</div>
+    <button class="nav-item" data-view="apikeys" type="button">
+      <span class="nav-icon">🔑</span><span>API keys</span>
+    </button>
+    <button class="nav-item" data-view="webhooks" type="button">
+      <span class="nav-icon">🔔</span><span>Webhooks</span>
+    </button>
+  </div>
+
+  <div class="nav-footer">
+    <div class="nav-footer-line" id="navStatus">conectando…</div>
+  </div>
+</nav>
+
+<div class="app-main">
+
 <header class="topbar">
-  <div class="brand">My Store · WhatsApp Agent</div>
-  <select id="tenantSelect" class="btn"></select>
-  <div class="status" id="connStatus">conectando…</div>
-  <button id="btnRelink" class="btn hidden">Re-link QR</button>
+  <select id="tenantSelect" class="select"></select>
   <span id="ghlBadge" class="badge"></span>
-  <button id="btnProvisionProvider" class="btn warn hidden" title="Crea un Conversation Provider para esta sub-account (requerido para que GHL acepte mensajes inbound)">⚠ Provisionar provider</button>
+  <button id="btnRelink" class="btn-sm hidden">Re-link QR</button>
+  <button id="btnProvisionProvider" class="btn-sm warn hidden" title="Crea un Conversation Provider para esta sub-account (requerido para que GHL acepte mensajes inbound)">⚠ Provisionar provider</button>
   <span id="metricsBar" class="metrics" title="Contadores desde el inicio del proceso"></span>
+  <span class="topbar-spacer"></span>
+  <span class="status" id="connStatus">conectando…</span>
   <label class="ai-global" title="Pausa la IA para TODAS las conversaciones de este tenant">
     <input type="checkbox" id="aiGlobalToggle" />
     <span id="aiGlobalLabel">Modo humano global</span>
   </label>
-  <button id="btnStats" class="btn" title="Resumen agregado del tenant">Resumen</button>
-  <button id="btnNumbers" class="btn" title="Gestionar números de WhatsApp del tenant">Números</button>
-  <button id="btnGroups" class="btn" title="Elegir qué grupos ver en la bandeja">Grupos</button>
-  <button id="btnAudit" class="btn" title="Ver últimas acciones registradas">Audit</button>
-  <button id="btnApiKeys" class="btn" title="Gestionar tokens de acceso programático (Bearer)">API keys</button>
-  <button id="btnWebhooks" class="btn" title="Suscribirse a eventos salientes (POST firmado con HMAC)">Webhooks</button>
-  <button id="btnPrompt" class="btn">Editar prompt</button>
 </header>
+
+<!-- Disparadores ocultos: el nav-item dispara su .click() y reusa toda la logica
+     existente (open*Modal). Asi no toco app.js mas que el wire de la nav. -->
+<div class="hidden">
+  <button id="btnStats"></button>
+  <button id="btnNumbers"></button>
+  <button id="btnGroups"></button>
+  <button id="btnAudit"></button>
+  <button id="btnApiKeys"></button>
+  <button id="btnWebhooks"></button>
+  <button id="btnPrompt"></button>
+</div>
 
 <main class="layout">
   <aside class="sidebar">
@@ -73,6 +129,9 @@
     </footer>
   </section>
 </main>
+
+</div><!-- /.app-main -->
+</div><!-- /.app -->
 
 <div id="qrModal" class="modal hidden">
   <div class="modal-body">
@@ -244,6 +303,6 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="/app.js?v=20260521h"></script>
+<script src="/app.js?v=20260521i"></script>
 </body>
 </html>
