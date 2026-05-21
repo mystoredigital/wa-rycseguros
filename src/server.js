@@ -565,7 +565,14 @@ export function startServer(port = 3000) {
       await session.send(jid, text, { quotedStanzaId });
       logAudit({ tenantId: t.tenantId, actor: actorFrom(req), type: 'send', target: { jid, numberId: session.numberId }, meta: { length: text.length, quoted: !!quotedStanzaId } });
       res.json({ ok: true, numberId: session.numberId });
-    } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+    } catch (e) {
+      if (e.status === 429) {
+        const retryS = Math.ceil((e.retryAfterMs || 1000) / 1000);
+        logAudit({ tenantId: req.embedLocationId || req.apiKey?.tenantId || req.query.tenant, actor: actorFrom(req), type: 'send-blocked', target: { jid: req.body?.jid }, meta: { reason: e.reason, retryAfterMs: e.retryAfterMs } });
+        return res.status(429).set('Retry-After', String(retryS)).json({ error: e.message, reason: e.reason, retryAfterMs: e.retryAfterMs });
+      }
+      res.status(e.status || 500).json({ error: e.message });
+    }
   });
 
   // Sube un archivo a R2 y lo envía via WhatsApp. Body: multipart/form-data con
@@ -607,6 +614,11 @@ export function startServer(port = 3000) {
       });
       res.json({ ok: true, url: uploaded.url, numberId: session.numberId });
     } catch (e) {
+      if (e.status === 429) {
+        const retryS = Math.ceil((e.retryAfterMs || 1000) / 1000);
+        logAudit({ tenantId: req.embedLocationId || req.apiKey?.tenantId || req.query.tenant, actor: actorFrom(req), type: 'send-blocked', meta: { reason: e.reason, retryAfterMs: e.retryAfterMs, media: true } });
+        return res.status(429).set('Retry-After', String(retryS)).json({ error: e.message, reason: e.reason, retryAfterMs: e.retryAfterMs });
+      }
       console.error('[send-media]', e);
       res.status(e.status || 500).json({ error: e.message });
     }

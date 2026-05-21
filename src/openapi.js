@@ -98,6 +98,17 @@ export const openapiSpec = {
               reconnects: { type: 'integer' },
               connectedAt: { type: 'integer', nullable: true, description: 'epoch ms del connect actual (null si desconectado)' },
               lastActivityAt: { type: 'integer', nullable: true, description: 'epoch ms del último envío/recepción' },
+              limiter: {
+                type: 'object',
+                nullable: true,
+                description: 'Estado del rate limiter de la sesión',
+                properties: {
+                  perChatCooldownMs: { type: 'integer' },
+                  globalMaxPerMin: { type: 'integer' },
+                  windowCount: { type: 'integer', description: 'Mensajes enviados en los últimos 60s' },
+                  windowRemaining: { type: 'integer', description: 'Slots libres en el límite global/min' },
+                },
+              },
             },
           },
         },
@@ -397,7 +408,28 @@ export const openapiSpec = {
             },
           },
         },
-        responses: { 200: { description: 'OK' }, 404: { description: 'Sin sesión disponible' } },
+        responses: {
+          200: { description: 'OK' },
+          404: { description: 'Sin sesión disponible' },
+          429: {
+            description: 'Rate limited',
+            headers: {
+              'Retry-After': { schema: { type: 'integer' }, description: 'Segundos hasta poder reintentar' },
+            },
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    error: { type: 'string' },
+                    reason: { type: 'string', enum: ['per-chat cooldown', 'global rate limit'] },
+                    retryAfterMs: { type: 'integer' },
+                  },
+                },
+              },
+            },
+          },
+        },
       },
     },
     '/api/send-media': {
@@ -425,6 +457,7 @@ export const openapiSpec = {
         },
         responses: {
           200: { description: 'OK con URL pública R2' },
+          429: { description: 'Rate limited (mismo shape que POST /api/send)' },
           500: { description: 'R2 no configurado' },
         },
       },

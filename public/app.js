@@ -280,10 +280,15 @@ function renderNumbersList() {
     const m = n.metrics;
     const uptime = m?.connectedAt ? formatAgo(m.connectedAt) : '—';
     const lastAct = m?.lastActivityAt ? formatAgo(m.lastActivityAt) : '—';
+    const lim = m?.limiter;
+    const limTooltip = lim
+      ? `Limite: ${lim.windowCount}/${lim.globalMaxPerMin} en los últimos 60s · cooldown por chat ${lim.perChatCooldownMs}ms`
+      : 'Rate limiter';
     const stats = m
       ? `<span title="Mensajes enviados por la IA">IA <b>${m.sent}</b></span>
          <span title="Mensajes enviados manualmente">manual <b>${m.manual || 0}</b></span>
          <span title="Mensajes recibidos">recibidos <b>${m.received || 0}</b></span>
+         <span title="${escapeHtml(limTooltip)}">rate-skip <b>${m.skippedRateLimit || 0}</b>${lim ? ` <span class="muted">(${lim.windowCount}/${lim.globalMaxPerMin}·min)</span>` : ''}</span>
          <span title="Reconexiones automáticas">reconn <b>${m.reconnects}</b></span>`
       : '<span class="muted">sin datos</span>';
     return `<div class="number-row" data-numberid="${escapeHtml(n.id)}">

@@ -52,16 +52,34 @@ class RateLimiter {
   }
   check(jid) {
     const now = Date.now();
-    const last = this._lastByJid.get(jid) || 0;
-    if (now - last < PER_CHAT_COOLDOWN_MS) return { ok: false, reason: 'per-chat cooldown' };
     this._window = this._window.filter((t) => now - t < 60_000);
-    if (this._window.length >= GLOBAL_MAX_PER_MIN) return { ok: false, reason: 'global rate limit' };
+    const last = this._lastByJid.get(jid) || 0;
+    const sinceLast = now - last;
+    if (sinceLast < PER_CHAT_COOLDOWN_MS) {
+      return { ok: false, reason: 'per-chat cooldown', retryAfterMs: PER_CHAT_COOLDOWN_MS - sinceLast };
+    }
+    if (this._window.length >= GLOBAL_MAX_PER_MIN) {
+      const oldest = this._window[0];
+      return { ok: false, reason: 'global rate limit', retryAfterMs: Math.max(1000, 60_000 - (now - oldest)) };
+    }
     return { ok: true };
   }
   record(jid) {
     const now = Date.now();
     this._lastByJid.set(jid, now);
     this._window.push(now);
+  }
+  // Snapshot del estado actual del limiter para exponer en /api/state o /api/numbers.
+  // No es exhaustivo (per-chat cooldown varia por jid) — solo agregado global util.
+  snapshot() {
+    const now = Date.now();
+    const recent = this._window.filter((t) => now - t < 60_000);
+    return {
+      perChatCooldownMs: PER_CHAT_COOLDOWN_MS,
+      globalMaxPerMin: GLOBAL_MAX_PER_MIN,
+      windowCount: recent.length,
+      windowRemaining: Math.max(0, GLOBAL_MAX_PER_MIN - recent.length),
+    };
   }
 }
 
@@ -179,7 +197,19 @@ export class WhatsAppSession {
   }
 
   getMetrics() {
-    return { ...this.metrics };
+    return { ...this.metrics, limiter: this._limiter?.snapshot() || null };
+  }
+
+  // Lanza un error con status=429 si la siguiente acción rebasaria el limiter.
+  // Los handlers HTTP lo capturan y devuelven 429 + Retry-After.
+  _enforceLimit(jid) {
+    const check = this._limiter.check(jid);
+    if (check.ok) return;
+    const err = new Error(`rate limited: ${check.reason}`);
+    err.status = 429;
+    err.retryAfterMs = check.retryAfterMs || 1000;
+    err.reason = check.reason;
+    throw err;
   }
 
   _emitMetrics() {
@@ -533,10 +563,12 @@ export class WhatsAppSession {
         const target = jitter(HUMAN_DELAY_MIN_MS, HUMAN_DELAY_MAX_MS);
         const elapsed = Date.now() - startedAt;
         if (elapsed < target) await sleep(target - elapsed);
+        // Reservamos el slot antes de mandar — si Baileys falla, el rate limit
+        // igual cuenta este intento (mas conservador contra ban del numero).
+        this._limiter.record(effectiveJid);
         const sent = await this.sock.sendMessage(jid, { text: reply });
         this._rememberSentByUs(sent?.key?.id);
         this._cacheMsg(sent);
-        this._limiter.record(effectiveJid);
         this._bump('sent');
         this._touchActivity();
         this.store.addMessage(effectiveJid, { role: 'assistant', text: reply, numberId: this.numberId, id: sent?.key?.id });
@@ -672,10 +704,15 @@ export class WhatsAppSession {
 
   async send(jid, text, opts = {}) {
     if (!this.sock) throw new Error('WhatsApp no conectado');
+    if (!opts.skipRateLimit) {
+      try { this._enforceLimit(jid); }
+      catch (e) { this._bump('skippedRateLimit'); throw e; }
+    }
     const quotedMeta = this._quotedMetaFor(jid, opts.quotedStanzaId);
     const quotedProto = opts.quotedStanzaId ? this._msgCache.get(opts.quotedStanzaId) : null;
     const payload = { text };
     if (quotedProto) payload.quoted = quotedProto;
+    this._limiter.record(jid);
     const sent = await this.sock.sendMessage(jid, payload);
     this._rememberSentByUs(sent?.key?.id);
     this._cacheMsg(sent);
@@ -703,6 +740,10 @@ export class WhatsAppSession {
   // por Baileys para evitar problemas de CDN.
   async sendMedia(jid, { url, mimetype, fileName, caption, ptt }, opts = {}) {
     if (!this.sock) throw new Error('WhatsApp no conectado');
+    if (!opts.skipRateLimit) {
+      try { this._enforceLimit(jid); }
+      catch (e) { this._bump('skippedRateLimit'); throw e; }
+    }
     const { buffer, contentType } = await downloadUrlToBuffer(url);
     const finalMime = mimetype || contentType;
     const { waType } = mimeToWa(finalMime);
@@ -715,6 +756,7 @@ export class WhatsAppSession {
     const quotedMeta = this._quotedMetaFor(jid, opts.quotedStanzaId);
     const quotedProto = opts.quotedStanzaId ? this._msgCache.get(opts.quotedStanzaId) : null;
     if (quotedProto) payload.quoted = quotedProto;
+    this._limiter.record(jid);
     const sent = await this.sock.sendMessage(jid, payload);
     this._rememberSentByUs(sent?.key?.id);
     this._cacheMsg(sent);
