@@ -245,6 +245,20 @@ body.embed .topbar { padding:8px 16px; }
 .sidebar .mode-badge.human { background: rgba(255,179,0,0.15); color: var(--warning); }
 .sidebar li.has-unread .name { font-weight: 700; color: var(--text-0); }
 .sidebar li.has-unread .preview { color: var(--text-1); }
+.sidebar .name .number-badge {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 1px 6px;
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: var(--accent);
+  background: rgba(29,155,240,0.10);
+  border: 1px solid rgba(29,155,240,0.30);
+  border-radius: 4px;
+  vertical-align: middle;
+}
 .unread-badge {
   display: inline-flex;
   align-items: center;
@@ -268,11 +282,14 @@ body.embed .topbar { padding:8px 16px; }
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 12px 20px;
+  padding: 10px 20px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-3);
 }
+.chat-header-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 #chatTitle { font-weight: 600; font-size: 14px; color: var(--text-0); }
+.chat-subtitle { font-size: 11px; color: var(--text-2); font-family: var(--mono); }
+.chat-subtitle:empty { display: none; }
 .toggle { display: flex; align-items: center; gap: 8px; font-size: 13px; cursor: pointer; }
 .messages {
   flex: 1;

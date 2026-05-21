@@ -9,7 +9,7 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <link rel="manifest" href="/site.webmanifest" />
-<link rel="stylesheet" href="/style.css?v=20260521k" />
+<link rel="stylesheet" href="/style.css?v=20260521l" />
 </head>
 <body>
 <div class="app">
@@ -100,7 +100,10 @@
 
   <section class="chat">
     <header class="chat-header">
-      <div id="chatTitle">Selecciona un chat</div>
+      <div class="chat-header-info">
+        <div id="chatTitle">Selecciona un chat</div>
+        <div id="chatSubtitle" class="chat-subtitle"></div>
+      </div>
       <div class="chat-header-actions">
         <label class="toggle">
           <input type="checkbox" id="modeToggle" />
@@ -305,6 +308,6 @@
 </div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="/app.js?v=20260521k"></script>
+<script src="/app.js?v=20260521l"></script>
 </body>
 </html>

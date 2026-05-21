@@ -808,8 +808,12 @@ function renderChatList() {
     const unreadBadge = unread > 0
       ? `<span class="unread-badge">${unread > 99 ? '99+' : unread}</span>`
       : '';
+    const opLabel = numberLabelFor(conv);
+    const opBadge = opLabel
+      ? `<span class="number-badge" title="Recibido por el número '${escapeHtml(opLabel)}'">${escapeHtml(opLabel)}</span>`
+      : '';
     li.innerHTML = `
-      <div class="name">${groupBadge}${escapeHtml(displayName(conv))}</div>
+      <div class="name">${groupBadge}${escapeHtml(displayName(conv))}${opBadge}</div>
       <div class="preview">${last ? escapeHtml((previewPrefix + (last.text || '')).slice(0, 60)) : '(sin mensajes)'}</div>
       <div class="meta">
         ${unreadBadge}
@@ -847,6 +851,7 @@ function renderMessages() {
   if (mergeBtn) mergeBtn.disabled = !conv;
   if (!conv) {
     $('chatTitle').textContent = 'Selecciona un chat';
+    $('chatSubtitle').textContent = '';
     $('modeToggle').checked = false;
     $('modeToggle').disabled = true;
     $('manualInput').disabled = true;
@@ -854,6 +859,14 @@ function renderMessages() {
     return;
   }
   $('chatTitle').textContent = displayName(conv);
+  // Subtitle: telefono del contacto (cuando se puede derivar del jid) + numero
+  // del operador (si hay multi-numero). Ejemplo: "+57 305 4486462 · vía ventas"
+  const phone = displayPhone(conv);
+  const opLabel = numberLabelFor(conv);
+  const parts = [];
+  if (phone) parts.push(phone);
+  if (opLabel) parts.push(`vía ${opLabel}`);
+  $('chatSubtitle').textContent = parts.join(' · ');
   $('modeToggle').checked = conv.mode === 'human';
   $('modeToggle').disabled = false;
   const isHuman = conv.mode === 'human';
@@ -959,6 +972,35 @@ function displayName(conv) {
   if (conv.jid.endsWith('@s.whatsapp.net')) return `+${conv.jid.split('@')[0]}`;
   if (conv.jid.endsWith('@lid')) return 'Sin identificar';
   return conv.jid;
+}
+
+// Devuelve un telefono mostrable del contacto. Solo @s.whatsapp.net trae el numero
+// real en el JID; @lid no lo expone (es un identificador opaco que cambia por sesion).
+function displayPhone(conv) {
+  if (!conv || conv.isGroup) return '';
+  const jid = conv.jid;
+  if (jid.endsWith('@s.whatsapp.net')) {
+    const raw = jid.split('@')[0];
+    // Formato suelto: +<pais> <resto en grupos de 3-4>. No conozco el pais a priori,
+    // asi que solo agrupo de derecha a izquierda en bloques de 4 para legibilidad.
+    if (/^\d{6,}$/.test(raw)) {
+      const groups = raw.replace(/(\d)(?=(\d{4})+$)/g, '$1 ');
+      return `+${groups}`;
+    }
+    return `+${raw}`;
+  }
+  return ''; // @lid u otros: sin telefono visible
+}
+
+// Label del numero del operador (sesion Baileys) por el que llegó/se envia este chat.
+// Se deriva del numberId del ultimo mensaje. Si no hay multi-numero, retorna ''.
+function numberLabelFor(conv) {
+  if (!conv || !state.numbers || state.numbers.length < 2) return '';
+  const last = conv.messages?.[conv.messages.length - 1];
+  const numberId = last?.numberId;
+  if (!numberId) return '';
+  const num = state.numbers.find((n) => n.id === numberId);
+  return num?.label || numberId;
 }
 
 function escapeHtml(s) {
