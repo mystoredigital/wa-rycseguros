@@ -160,12 +160,16 @@ export class WhatsAppSession {
     this._msgCache = new Map();
     this._msgCacheMax = 300;
     this.metrics = {
-      sent: 0,
+      sent: 0,             // mensajes enviados por la IA (retro-compat — pintado como "IA" en el header)
+      manual: 0,           // mensajes enviados manualmente desde el dashboard
+      received: 0,         // mensajes recibidos (1:1 y grupos habilitados)
       skippedRateLimit: 0,
       skippedQuietHours: 0,
       skippedGreylist: 0,
       skippedAiDisabled: 0,
       reconnects: 0,
+      connectedAt: null,   // epoch ms del último connection.open (null si desconectado)
+      lastActivityAt: null, // epoch ms del último mensaje enviado o recibido
     };
   }
 
@@ -178,10 +182,25 @@ export class WhatsAppSession {
     return { ...this.metrics };
   }
 
+  _emitMetrics() {
+    this.store.emit('metrics', { tenantId: this.store.tenantId, numberId: this.numberId, metrics: this.getMetrics() });
+  }
+
   _bump(key) {
     if (!(key in this.metrics)) return;
     this.metrics[key]++;
-    this.store.emit('metrics', { tenantId: this.store.tenantId, numberId: this.numberId, metrics: this.getMetrics() });
+    this._emitMetrics();
+  }
+
+  _setMetric(key, value) {
+    if (!(key in this.metrics)) return;
+    this.metrics[key] = value;
+    this._emitMetrics();
+  }
+
+  _touchActivity() {
+    this.metrics.lastActivityAt = Date.now();
+    this._emitMetrics();
   }
 
   // Devuelve el nombre del grupo (subject). Cachea 1h. Retorna jid si la query falla.
@@ -281,12 +300,14 @@ export class WhatsAppSession {
       if (connection === 'open') {
         this._reconnectAttempt = 0;
         this.store.setNumberConnection(this.numberId, 'connected');
+        this._setMetric('connectedAt', Date.now());
         console.log(`[wa:${this._tag}] conectado`);
       }
       if (connection === 'close') {
         const code = new Boom(lastDisconnect?.error).output?.statusCode;
         const loggedOut = code === DisconnectReason.loggedOut;
         this.store.setNumberConnection(this.numberId, loggedOut ? 'logged_out' : 'disconnected');
+        this._setMetric('connectedAt', null);
         if (!loggedOut) {
           const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_BASE_MS * 2 ** this._reconnectAttempt);
           this._reconnectAttempt = Math.min(this._reconnectAttempt + 1, 10);
@@ -382,6 +403,7 @@ export class WhatsAppSession {
           console.warn(`[wa:${this._tag}] auto-markRead tras fromMe: ${e.message}`)
         );
       }
+      this._touchActivity();
       return;
     }
 
@@ -444,6 +466,8 @@ export class WhatsAppSession {
     );
     this.store.noteNumberForJid(effectiveJid, this.numberId);
     if (!isGroup && resolved?.phone) this.store.registerPhone(effectiveJid, resolved.phone);
+    this._bump('received');
+    this._touchActivity();
 
     // Mirror a GHL si el tenant está conectado Y tenemos teléfono real (NO grupos — local-only)
     if (!isGroup && resolved?.phone) {
@@ -514,6 +538,7 @@ export class WhatsAppSession {
         this._cacheMsg(sent);
         this._limiter.record(effectiveJid);
         this._bump('sent');
+        this._touchActivity();
         this.store.addMessage(effectiveJid, { role: 'assistant', text: reply, numberId: this.numberId, id: sent?.key?.id });
         this.store.noteNumberForJid(effectiveJid, this.numberId);
         // Mirror la respuesta de IA a GHL como inbound del lado business
@@ -660,6 +685,8 @@ export class WhatsAppSession {
       ...(quotedMeta ? { quoted: quotedMeta } : {}),
     });
     this.store.noteNumberForJid(jid, this.numberId);
+    this._bump('manual');
+    this._touchActivity();
     if (opts.skipGhlMirror) return;
     if (jid.endsWith('@g.us')) return; // grupos son local-only, no se mirorean a GHL
     // Mensaje originado fuera de GHL (dashboard) → mirroreamos para que aparezca en GHL Conversations
@@ -699,6 +726,8 @@ export class WhatsAppSession {
       ...(quotedMeta ? { quoted: quotedMeta } : {}),
     });
     this.store.noteNumberForJid(jid, this.numberId);
+    this._bump('manual');
+    this._touchActivity();
     if (opts.skipGhlMirror) return;
     if (jid.endsWith('@g.us')) return; // grupos local-only
     const phone = jidToPhone(jid);

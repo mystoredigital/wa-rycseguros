@@ -250,6 +250,20 @@ async function loadNumbers() {
   }
 }
 
+// Formato compacto "hace 3m", "hace 2h 5m", "hace 3d". Para uptime y lastActivity.
+function formatAgo(ms) {
+  if (!ms) return '—';
+  const diff = Math.max(0, Date.now() - ms);
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `hace ${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `hace ${m}m`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `hace ${h}h ${m % 60}m`;
+  const d = Math.floor(h / 24);
+  return `hace ${d}d ${h % 24}h`;
+}
+
 function renderNumbersList() {
   const list = $('numbersList');
   if (!state.numbers.length) {
@@ -263,6 +277,15 @@ function renderNumbersList() {
       ? `<div class="qr-block"><img src="${escapeHtml(n.connection.qr)}" alt="QR"></div>`
       : '';
     const isOnlyOne = state.numbers.length === 1;
+    const m = n.metrics;
+    const uptime = m?.connectedAt ? formatAgo(m.connectedAt) : '—';
+    const lastAct = m?.lastActivityAt ? formatAgo(m.lastActivityAt) : '—';
+    const stats = m
+      ? `<span title="Mensajes enviados por la IA">IA <b>${m.sent}</b></span>
+         <span title="Mensajes enviados manualmente">manual <b>${m.manual || 0}</b></span>
+         <span title="Mensajes recibidos">recibidos <b>${m.received || 0}</b></span>
+         <span title="Reconexiones automáticas">reconn <b>${m.reconnects}</b></span>`
+      : '<span class="muted">sin datos</span>';
     return `<div class="number-row" data-numberid="${escapeHtml(n.id)}">
       <div class="info">
         <div class="label">${escapeHtml(n.label || n.id)}</div>
@@ -273,10 +296,21 @@ function renderNumbersList() {
         <button class="btn" data-action="relink" data-numberid="${escapeHtml(n.id)}">Re-link QR</button>
         ${isOnlyOne ? '' : `<button class="btn" data-action="remove" data-numberid="${escapeHtml(n.id)}">Eliminar</button>`}
       </div>
+      <div class="number-meta">
+        <span title="Tiempo conectado">⏱ ${uptime}</span>
+        <span title="Último mensaje enviado o recibido">💬 ${lastAct}</span>
+      </div>
+      <div class="number-stats">${stats}</div>
       ${qrHtml}
     </div>`;
   }).join('');
 }
+
+// Refresca uptime/lastActivity cada 30s mientras el modal está abierto
+// (los timestamps se calculan en cliente desde el epoch, así que basta con re-renderizar).
+setInterval(() => {
+  if (!$('numbersModal').classList.contains('hidden')) renderNumbersList();
+}, 30_000);
 
 async function addNumber() {
   const id = $('newNumberId').value.trim();
@@ -817,7 +851,16 @@ socket.on('connection', (payload) => {
   }
   renderConnection();
 });
-socket.on('metrics', ({ metrics }) => { state.metrics = metrics; renderMetrics(); });
+socket.on('metrics', ({ numberId, metrics }) => {
+  if (numberId) {
+    const idx = state.numbers.findIndex((n) => n.id === numberId);
+    if (idx >= 0) state.numbers[idx] = { ...state.numbers[idx], metrics };
+    if (!$('numbersModal').classList.contains('hidden')) renderNumbersList();
+  }
+  // Header global: métricas del default (primer) número, con fallback al payload directo
+  state.metrics = (state.numbers[0]?.metrics) || metrics;
+  renderMetrics();
+});
 socket.on('config', ({ config }) => { state.config = config; renderAiGlobal(); renderChatList(); });
 socket.on('mode', ({ jid, mode }) => {
   const conv = state.conversations.find((c) => c.jid === jid);

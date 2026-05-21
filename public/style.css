@@ -219,6 +219,10 @@ body.embed .topbar { padding:8px 16px; }
 .number-row .state.disconnected, .number-row .state.logged_out { background:#5a1a1a;color:#f44336; }
 .number-row .actions { display:flex;gap:6px; }
 .number-row .actions button { font-size:12px;padding:4px 10px; }
+.number-row .number-meta { flex-basis:100%;display:flex;gap:14px;font-size:11px;color:#8899a6;margin-top:6px; }
+.number-row .number-stats { flex-basis:100%;display:flex;flex-wrap:wrap;gap:14px;font-size:11px;color:#8899a6;margin-top:2px; }
+.number-row .number-stats b { color:#d6e1ec;font-weight:600;margin-left:2px; }
+.number-row .number-stats .muted { color:#5b6b7a;font-style:italic; }
 .number-row .qr-block { flex-basis:100%;display:flex;justify-content:center;padding:12px;background:#0f1419;border-radius:6px;margin-top:4px; }
 .number-row .qr-block img { width:240px;height:240px; }
 

@@ -494,7 +494,13 @@ export function startServer(port = 3000) {
   app.get('/api/numbers', (req, res) => {
     try {
       const t = getTenant(req);
-      res.json({ numbers: t.listNumbers(), defaultId: t.getDefaultNumberId() });
+      // Enriquece cada número con metrics live de su sesión Baileys (uptime, lastActivity, contadores).
+      // Si la sesión aún no existe (arranque) devuelve metrics=null.
+      const numbers = t.listNumbers().map((n) => {
+        const session = tenants.session(t.tenantId, n.id);
+        return { ...n, metrics: session?.getMetrics() || null };
+      });
+      res.json({ numbers, defaultId: t.getDefaultNumberId() });
     } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
   });
 
