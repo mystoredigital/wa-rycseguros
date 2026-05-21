@@ -38,9 +38,11 @@ async function rotateIfNeeded() {
   }
 }
 
-// Resuelve quién hizo la acción a partir del req. Embed cookie > Basic Auth > 'system'.
+// Resuelve quién hizo la acción a partir del req.
+// Precedencia: API key > embed cookie > Basic Auth > 'anonymous'.
 export function actorFrom(req) {
   if (!req) return 'system';
+  if (req.apiKey?.label) return `key:${req.apiKey.label}`;
   if (req.embedUser?.email) return `embed:${req.embedUser.email}`;
   if (req.embedLocationId) return `embed:${req.embedLocationId}`;
   const header = req.headers?.authorization || '';

@@ -361,6 +361,71 @@ function renderAuditRow(e) {
   </div>`;
 }
 
+// ---------- API keys ----------
+
+async function openApiKeysModal() {
+  $('apiKeysModal').classList.remove('hidden');
+  $('newKeyResult').classList.add('hidden');
+  $('newKeyLabel').value = '';
+  await loadApiKeys();
+}
+
+async function loadApiKeys() {
+  const list = $('apiKeysList');
+  list.innerHTML = '<div class="empty">Cargando…</div>';
+  try {
+    const r = await fetch(withTenant('/api/keys'));
+    const data = await r.json();
+    if (!r.ok) {
+      list.innerHTML = `<div class="empty">Error: ${escapeHtml(data.error || r.status)}</div>`;
+      return;
+    }
+    const keys = data.keys || [];
+    if (!keys.length) {
+      list.innerHTML = '<div class="empty">Aún no hay keys. Crea una abajo.</div>';
+      return;
+    }
+    list.innerHTML = keys.map(renderApiKeyRow).join('');
+  } catch (e) {
+    list.innerHTML = `<div class="empty">Error: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderApiKeyRow(k) {
+  const created = new Date(k.createdAt).toLocaleString();
+  const lastUsed = k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString() : 'nunca usada';
+  const revoked = !!k.revokedAt;
+  const status = revoked ? 'revocada' : 'activa';
+  const cls = revoked ? 'revoked' : 'active';
+  return `<div class="api-key-row ${cls}">
+    <div class="info">
+      <div class="label">${escapeHtml(k.label)} <span class="state ${cls}">${status}</span></div>
+      <div class="id">id: ${escapeHtml(k.id)} · creada ${escapeHtml(created)} · ${escapeHtml(lastUsed)}</div>
+    </div>
+    ${revoked ? '' : `<button class="btn" data-action="revoke" data-keyid="${escapeHtml(k.id)}">Revocar</button>`}
+  </div>`;
+}
+
+async function createApiKey() {
+  const label = $('newKeyLabel').value.trim();
+  if (!label) { alert('label requerido'); return; }
+  const btn = $('apiKeysCreate');
+  btn.disabled = true;
+  try {
+    const r = await fetch(withTenant('/api/keys'), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label }),
+    });
+    const data = await r.json();
+    if (!r.ok) { alert('Error: ' + (data.error || r.status)); return; }
+    $('newKeyToken').textContent = data.key.token;
+    $('newKeyResult').classList.remove('hidden');
+    $('newKeyLabel').value = '';
+    await loadApiKeys();
+  } finally { btn.disabled = false; }
+}
+
 async function addNumber() {
   const id = $('newNumberId').value.trim();
   const label = $('newNumberLabel').value.trim();
@@ -865,6 +930,27 @@ on('btnAudit', 'click', openAuditModal);
 on('auditClose', 'click', () => $('auditModal').classList.add('hidden'));
 on('auditRefresh', 'click', loadAudit);
 on('auditType', 'change', loadAudit);
+
+on('btnApiKeys', 'click', openApiKeysModal);
+on('apiKeysClose', 'click', () => $('apiKeysModal').classList.add('hidden'));
+on('apiKeysCreate', 'click', createApiKey);
+on('apiKeysList', 'click', async (e) => {
+  const btn = e.target.closest('button[data-action="revoke"]');
+  if (!btn) return;
+  const id = btn.dataset.keyid;
+  if (!confirm(`Revocar la key '${id}'? Cualquier integración que la use dejará de funcionar.`)) return;
+  const r = await fetch(`/api/keys/${encodeURIComponent(id)}?tenant=${encodeURIComponent(state.tenantId)}`, { method: 'DELETE' });
+  const data = await r.json();
+  if (!r.ok) { alert('Error: ' + (data.error || r.status)); return; }
+  await loadApiKeys();
+});
+on('newKeyCopy', 'click', () => {
+  const token = $('newKeyToken').textContent;
+  navigator.clipboard?.writeText(token).then(() => {
+    $('newKeyCopy').textContent = 'Copiado ✓';
+    setTimeout(() => { $('newKeyCopy').textContent = 'Copiar'; }, 1500);
+  });
+});
 
 on('btnPrompt', 'click', () => {
   $('promptText').value = state.config.systemPrompt;

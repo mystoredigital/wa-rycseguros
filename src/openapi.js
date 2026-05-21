@@ -26,10 +26,16 @@ export const openapiSpec = {
     { name: 'Send', description: 'Envío manual de texto y media' },
     { name: 'GHL', description: 'Operaciones específicas de GoHighLevel' },
     { name: 'Audit', description: 'Registro append-only de acciones del operador' },
+    { name: 'API Keys', description: 'Tokens para acceso programático (Bearer). Una key fija el tenant.' },
   ],
   components: {
     securitySchemes: {
       basicAuth: { type: 'http', scheme: 'basic', description: 'DASHBOARD_USER / DASHBOARD_PASS' },
+      bearerAuth: {
+        type: 'http',
+        scheme: 'bearer',
+        description: 'API key con formato `wa_<keyId>_<secret>`. Crea una en POST /api/keys. La key fija el tenant.',
+      },
       embedCookie: {
         type: 'apiKey',
         in: 'cookie',
@@ -109,7 +115,7 @@ export const openapiSpec = {
       },
     },
   },
-  security: [{ basicAuth: [] }, { embedCookie: [] }],
+  security: [{ basicAuth: [] }, { bearerAuth: [] }, { embedCookie: [] }],
   paths: {
     '/api/health': {
       get: {
@@ -467,6 +473,103 @@ export const openapiSpec = {
               },
             },
           },
+        },
+      },
+    },
+    '/api/keys': {
+      get: {
+        tags: ['API Keys'],
+        summary: 'Lista las API keys del tenant (sin exponer el secreto)',
+        security: [{ basicAuth: [] }, { embedCookie: [] }],
+        parameters: [{ $ref: '#/components/parameters/TenantId' }],
+        responses: {
+          200: {
+            description: 'OK',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    keys: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          id: { type: 'string', description: '8 chars hex (público)' },
+                          label: { type: 'string' },
+                          tenantId: { type: 'string' },
+                          createdAt: { type: 'integer' },
+                          lastUsedAt: { type: 'integer', nullable: true },
+                          revokedAt: { type: 'integer', nullable: true },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          403: { description: 'No se puede gestionar keys usando una key' },
+        },
+      },
+      post: {
+        tags: ['API Keys'],
+        summary: 'Crea una API key nueva (devuelve el token UNA sola vez)',
+        security: [{ basicAuth: [] }, { embedCookie: [] }],
+        parameters: [{ $ref: '#/components/parameters/TenantId' }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['label'],
+                properties: { label: { type: 'string', description: 'Nombre humano (ej: "n8n-prod")' } },
+              },
+            },
+          },
+        },
+        responses: {
+          200: {
+            description: 'OK — el token completo solo aparece aquí',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    ok: { type: 'boolean' },
+                    key: {
+                      type: 'object',
+                      properties: {
+                        id: { type: 'string' },
+                        label: { type: 'string' },
+                        tenantId: { type: 'string' },
+                        token: { type: 'string', example: 'wa_a1b2c3d4_<32 hex chars>' },
+                        createdAt: { type: 'integer' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          403: { description: 'No se puede gestionar keys usando una key' },
+        },
+      },
+    },
+    '/api/keys/{id}': {
+      delete: {
+        tags: ['API Keys'],
+        summary: 'Revoca una API key (queda registrada pero ya no autentica)',
+        security: [{ basicAuth: [] }, { embedCookie: [] }],
+        parameters: [
+          { $ref: '#/components/parameters/TenantId' },
+          { name: 'id', in: 'path', required: true, schema: { type: 'string' } },
+        ],
+        responses: {
+          200: { description: 'OK' },
+          403: { description: 'No se puede gestionar keys usando una key' },
+          404: { description: 'No existe' },
         },
       },
     },

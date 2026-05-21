@@ -6,6 +6,7 @@ import path from 'node:path';
 import swaggerUi from 'swagger-ui-express';
 import { openapiSpec } from './openapi.js';
 import { logAudit, listAudit, actorFrom } from './audit.js';
+import { createKey, listKeys, revokeKey, verifyToken } from './apiKeys.js';
 import { tenants } from './tenants.js';
 import { buildAuthorizeUrl, exchangeCode, listLocations, getLocationToken } from './ghl/oauth.js';
 import { saveAgencyTokens, getFreshAgencyToken } from './ghl/agencies.js';
@@ -127,7 +128,7 @@ async function ensureConversationProvider(tenant) {
 const EMBED_COOKIE = 'embed_session';
 const SESSION_TTL = 60 * 60 * 12; // 12h
 
-function authMiddleware(req, res, next) {
+async function authMiddleware(req, res, next) {
   // Rutas siempre públicas (las requiere GHL o son endpoints de salud)
   if (
     req.path.startsWith('/oauth/') ||
@@ -144,7 +145,20 @@ function authMiddleware(req, res, next) {
     /^\/(favicon\.ico|favicon-\d+x\d+\.png|apple-touch-icon\.png|android-chrome-\d+x\d+\.png|site\.webmanifest)$/.test(req.path)
   ) return next();
 
-  // 1) Embed session cookie (válido y firmado)
+  const header = req.headers.authorization || '';
+
+  // 1) API key (Bearer). Una key válida fija req.apiKey = {id, label, tenantId}.
+  // Si viene un Bearer pero falla, NO hacemos fallback a Basic — devolvemos 401
+  // para que clientes mal configurados se enteren rápido.
+  if (header.startsWith('Bearer ')) {
+    const token = header.slice(7).trim();
+    const key = await verifyToken(token).catch(() => null);
+    if (!key) return res.status(401).json({ error: 'API key inválida o revocada' });
+    req.apiKey = key;
+    return next();
+  }
+
+  // 2) Embed session cookie (válido y firmado)
   const cookie = req.cookies?.[EMBED_COOKIE];
   if (cookie) {
     const locationId = verifySession(cookie, process.env.GHL_SHARED_SECRET || 'dev');
@@ -154,11 +168,10 @@ function authMiddleware(req, res, next) {
     }
   }
 
-  // 2) Basic auth
+  // 3) Basic auth
   const user = process.env.DASHBOARD_USER;
   const pass = process.env.DASHBOARD_PASS;
   if (!user || !pass) return next();
-  const header = req.headers.authorization || '';
   const [scheme, encoded] = header.split(' ');
   if (scheme === 'Basic' && encoded) {
     const [u, p] = Buffer.from(encoded, 'base64').toString().split(':');
@@ -173,6 +186,12 @@ function getTenant(req) {
   if (req.embedLocationId) {
     const t = tenants.get(req.embedLocationId);
     if (!t) throw Object.assign(new Error(`Tenant ${req.embedLocationId} no existe`), { status: 404 });
+    return t;
+  }
+  // Misma regla con API keys: el tenant lo fija la key, no la query
+  if (req.apiKey?.tenantId) {
+    const t = tenants.get(req.apiKey.tenantId);
+    if (!t) throw Object.assign(new Error(`Tenant ${req.apiKey.tenantId} no existe`), { status: 404 });
     return t;
   }
   const id = req.query.tenant || req.body?.tenant || '_local';
@@ -597,13 +616,56 @@ export function startServer(port = 3000) {
   // query string: tenant (default: todos), type, since (epoch ms), limit (default 200, max 500).
   app.get('/api/audit', async (req, res) => {
     try {
-      const tenantId = req.query.tenant || req.embedLocationId || null;
+      const tenantId = req.query.tenant || req.embedLocationId || req.apiKey?.tenantId || null;
       const type = req.query.type || null;
       const since = req.query.since ? Number(req.query.since) : null;
       const limit = Math.min(500, Math.max(1, Number(req.query.limit) || 200));
       const entries = await listAudit({ tenantId, type, since, limit });
       res.json({ entries });
     } catch (e) { res.status(500).json({ error: e.message }); }
+  });
+
+  // --- API keys ---
+  // CRUD blindado: una key no puede gestionar otras keys (evita lockout y privilege escalation).
+  function rejectIfBearer(req, res) {
+    if (req.apiKey) {
+      res.status(403).json({ error: 'Las API keys no pueden gestionar API keys — usa Basic Auth o la sesión embed' });
+      return true;
+    }
+    return false;
+  }
+
+  app.get('/api/keys', async (req, res) => {
+    if (rejectIfBearer(req, res)) return;
+    try {
+      const t = getTenant(req);
+      const keys = await listKeys({ tenantId: t.tenantId });
+      res.json({ keys });
+    } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  });
+
+  app.post('/api/keys', async (req, res) => {
+    if (rejectIfBearer(req, res)) return;
+    try {
+      const t = getTenant(req);
+      const { label } = req.body || {};
+      if (!label || !label.trim()) return res.status(400).json({ error: 'label requerido' });
+      const created = await createKey({ label, tenantId: t.tenantId });
+      logAudit({ tenantId: t.tenantId, actor: actorFrom(req), type: 'key-create', target: { keyId: created.id }, meta: { label: created.label } });
+      // OJO: token completo solo se devuelve aquí (la primera y única vez)
+      res.json({ ok: true, key: created });
+    } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+  });
+
+  app.delete('/api/keys/:id', async (req, res) => {
+    if (rejectIfBearer(req, res)) return;
+    try {
+      const t = getTenant(req);
+      const ok = await revokeKey(req.params.id);
+      if (!ok) return res.status(404).json({ error: 'key no existe' });
+      logAudit({ tenantId: t.tenantId, actor: actorFrom(req), type: 'key-revoke', target: { keyId: req.params.id } });
+      res.json({ ok: true });
+    } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
   });
 
   // --- GHL Embed SSO ---

@@ -9,7 +9,7 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
 <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <link rel="manifest" href="/site.webmanifest" />
-<link rel="stylesheet" href="/style.css?v=20260521c" />
+<link rel="stylesheet" href="/style.css?v=20260521d" />
 </head>
 <body>
 <header class="topbar">
@@ -27,6 +27,7 @@
   <button id="btnNumbers" class="btn" title="Gestionar números de WhatsApp del tenant">Números</button>
   <button id="btnGroups" class="btn" title="Elegir qué grupos ver en la bandeja">Grupos</button>
   <button id="btnAudit" class="btn" title="Ver últimas acciones registradas">Audit</button>
+  <button id="btnApiKeys" class="btn" title="Gestionar tokens de acceso programático (Bearer)">API keys</button>
   <button id="btnPrompt" class="btn">Editar prompt</button>
 </header>
 
@@ -97,6 +98,31 @@
     </div>
     <div class="row" style="margin-top:16px">
       <button id="numbersClose" class="btn">Cerrar</button>
+    </div>
+  </div>
+</div>
+
+<div id="apiKeysModal" class="modal hidden">
+  <div class="modal-body large">
+    <h3>API keys</h3>
+    <p style="color:#8899a6;font-size:13px;margin-top:0">Tokens Bearer para integraciones (n8n, scripts, Make). Una key opera sobre el tenant que la creó. El token completo solo se muestra al crearlo — guárdalo en un lugar seguro.</p>
+    <div id="apiKeysList" class="api-keys-list">
+      <div class="empty">Cargando…</div>
+    </div>
+    <div class="add-number">
+      <h4>Crear nueva key</h4>
+      <div class="row">
+        <input type="text" id="newKeyLabel" placeholder='Etiqueta (ej: "n8n-prod")' maxlength="64" />
+        <button id="apiKeysCreate" class="btn primary">Crear</button>
+      </div>
+      <div id="newKeyResult" class="new-key-result hidden">
+        <div class="warn-banner">⚠ Copia el token AHORA. No volverá a mostrarse.</div>
+        <code id="newKeyToken"></code>
+        <button id="newKeyCopy" class="btn">Copiar</button>
+      </div>
+    </div>
+    <div class="row" style="margin-top:16px">
+      <button id="apiKeysClose" class="btn">Cerrar</button>
     </div>
   </div>
 </div>
