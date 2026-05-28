@@ -1011,10 +1011,24 @@ function escapeHtml(s) {
 
 function selectChat(jid) {
   state.activeJid = jid;
+  // En móvil (CSS @media ≤720px) este body class hace que la lista se oculte
+  // y el chat ocupe la pantalla completa. En desktop no afecta nada.
+  document.body.classList.add('has-active-chat');
   clearReplyContext();
   renderChatList();
   renderMessages();
   markChatRead(jid);
+}
+
+// Volver del chat individual a la lista — solo relevante en móvil.
+// En desktop el botón está oculto por CSS, pero si se llama no rompe nada:
+// simplemente deselecciona el chat activo.
+function closeActiveChat() {
+  state.activeJid = null;
+  document.body.classList.remove('has-active-chat');
+  clearReplyContext();
+  renderChatList();
+  renderMessages();
 }
 
 async function setMode(jid, mode) {
@@ -1149,6 +1163,7 @@ on('messages', 'click', (e) => {
   setReplyContext(stanzaId, msg, conv);
 });
 on('replyContextCancel', 'click', clearReplyContext);
+on('btnBackMobile', 'click', closeActiveChat);
 on('btnMergeConv', 'click', openMergeModal);
 on('mergeCancel', 'click', () => $('mergeModal').classList.add('hidden'));
 on('mergeSearch', 'input', (e) => { _mergeFilter = e.target.value.trim(); renderMergeList(); });

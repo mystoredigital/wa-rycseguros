@@ -659,3 +659,73 @@ body.embed .topbar { padding:8px 16px; }
 .qr-hint { color: var(--text-3); font-size: 11px; margin: 8px 0 0; }
 
 .hidden { display: none !important; }
+
+/* ---------- Botón "atrás" móvil (oculto en desktop) ---------- */
+.btn-back-mobile {
+  display: none;
+  background: transparent;
+  border: 0;
+  color: var(--text-1);
+  font-size: 22px;
+  line-height: 1;
+  padding: 4px 10px 4px 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+.btn-back-mobile:hover { color: var(--text-0); }
+
+/* ---------- Mobile responsive (≤ 720px) ----------
+   En desktop el layout son tres columnas (nav lateral + lista + chat).
+   En móvil colapsa: nav arriba horizontal y un solo panel a la vez
+   (lista de conversaciones por default, chat full-screen al tocar uno). */
+@media (max-width: 720px) {
+  /* 1) Convertir nav-sidebar lateral → barra horizontal arriba (mismo
+        patrón que body.embed pero activado por viewport). */
+  .app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto auto 1fr;
+  }
+  .nav-sidebar {
+    flex-direction: row;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 4px;
+    padding: 6px 10px;
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    overflow-y: visible;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  .nav-brand { display: none; }
+  .nav-footer { display: none; }
+  .nav-section { flex-direction: row; gap: 2px; padding: 0; flex-shrink: 0; }
+  .nav-section + .nav-section { padding-left: 6px; margin-left: 2px; border-left: 1px solid var(--border-soft); }
+  .nav-title { display: none; }
+  .nav-item { padding: 5px 9px; font-size: 12px; gap: 5px; white-space: nowrap; }
+  .nav-item .nav-icon { font-size: 12px; }
+  .nav-item.active { box-shadow: inset 0 -2px 0 var(--accent); background: rgba(29,155,240,0.10); }
+
+  /* 2) Topbar más compacta, permitir wrap natural. */
+  .topbar { padding: 8px 12px; gap: 6px 10px; min-height: 44px; }
+  #tenantSelect, .select { min-width: 0; max-width: 100%; flex: 1 1 140px; font-size: 12px; }
+  .topbar .btn, .topbar .btn-sm { font-size: 12px; padding: 5px 9px; }
+
+  /* 3) Layout principal: una columna. Por default se ve la lista; al
+        seleccionar un chat (body.has-active-chat) se ve solo el chat. */
+  .layout { grid-template-columns: 1fr; }
+  .chat { display: none; }
+  body.has-active-chat .sidebar { display: none; }
+  body.has-active-chat .chat { display: flex; flex-direction: column; }
+
+  /* 4) Botón atrás visible. */
+  .btn-back-mobile { display: inline-flex; align-items: center; }
+
+  /* 5) Paddings reducidos en chat para aprovechar pantalla. */
+  .chat-header { padding: 10px 12px; }
+  .messages { padding: 10px 12px; }
+  .composer { padding: 8px 10px; }
+  .chat-header-info { min-width: 0; flex: 1; }
+  #chatTitle { font-size: 15px; }
+  .chat-subtitle { font-size: 11px; }
+}
