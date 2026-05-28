@@ -425,6 +425,7 @@ export class WhatsAppSession {
         this._pushOperatorToGHL({
           jid: fromMeKey, phone: fromMeResolved.phone, text: fromMeEffective,
           attachments: fromMeAttachment ? [fromMeAttachment.url] : [],
+          messageId: msg.key.id,
         }).catch((e) => console.error(`[ghl:${this.store.tenantId}] push fromMe`, e.message));
       }
 
@@ -591,7 +592,7 @@ export class WhatsAppSession {
         });
         // Mirror la respuesta de IA a GHL como inbound del lado business
         if (resolved?.phone) {
-          this._pushAIReplyToGHL({ jid: effectiveJid, phone: resolved.phone, text: reply }).catch((e) => {
+          this._pushAIReplyToGHL({ jid: effectiveJid, phone: resolved.phone, text: reply, messageId: sent?.key?.id }).catch((e) => {
             console.error(`[ghl:${this.store.tenantId}] push reply`, e.message);
             this.store.addMessage(effectiveJid, { role: 'system', text: `⚠️ Push reply GHL falló: ${e.message}` });
           });
@@ -681,18 +682,18 @@ export class WhatsAppSession {
     console.log(`[ghl:${this.store.tenantId}] inbound → contact ${contactId} (jid=${jid}) attachments=${(attachments || []).length} ghlMsg=${ghlMessageId || 'n/a'}`);
   }
 
-  async _pushAIReplyToGHL({ jid, phone, text }) {
-    return this._pushAssistantToGHL({ jid, phone, text, prefix: '🤖 ' });
+  async _pushAIReplyToGHL({ jid, phone, text, messageId }) {
+    return this._pushAssistantToGHL({ jid, phone, text, prefix: '🤖 ', messageId });
   }
 
   // Mensajes del operador originados FUERA de GHL (desde dashboard local o desde
   // el celular vinculado) — los mirroreamos a GHL para que el operador trabajando
   // en GHL Conversations vea el hilo completo.
-  async _pushOperatorToGHL({ jid, phone, text, attachments, quotedText }) {
-    return this._pushAssistantToGHL({ jid, phone, text, attachments, prefix: '👤 ', quotedText });
+  async _pushOperatorToGHL({ jid, phone, text, attachments, quotedText, messageId }) {
+    return this._pushAssistantToGHL({ jid, phone, text, attachments, prefix: '👤 ', quotedText, messageId });
   }
 
-  async _pushAssistantToGHL({ jid, phone, text, attachments, prefix = '', quotedText = '' }) {
+  async _pushAssistantToGHL({ jid, phone, text, attachments, prefix = '', quotedText = '', messageId }) {
     if (!this.store.ghl?.accessToken) return;
     const providerId = this.store.ghl.conversationProviderId || process.env.GHL_CONVERSATION_PROVIDER_ID;
     if (!providerId) return;
@@ -715,7 +716,7 @@ export class WhatsAppSession {
     // disponibilidad), fallback a INBOUND para garantizar que el mensaje
     // queda registrado en GHL — preferimos "notifica pero aparece" antes que
     // "no aparece en GHL". El error se loguea con stack para diagnóstico.
-    const payload = {
+    const basePayload = {
       contactId,
       message,
       conversationProviderId: providerId,
@@ -723,7 +724,13 @@ export class WhatsAppSession {
     };
     let resp;
     try {
-      resp = await ghl.sendOutboundMessage(payload);
+      resp = await ghl.sendOutboundMessage({
+        ...basePayload,
+        // Campos extra que el endpoint outbound exige (a diferencia del inbound):
+        locationId: this.store.ghl.locationId,
+        phone,
+        ...(messageId ? { messageId: `wa:${messageId}` } : {}),
+      });
       // Red de seguridad: si GHL eco-disparara el deliveryUrl con este msg,
       // /webhooks/ghl/outbound lo descarta y no se reenvía duplicado a WA.
       const ghlMessageId = resp?.messageId || resp?.message?.id || resp?.id;
@@ -732,7 +739,7 @@ export class WhatsAppSession {
       console.error(`[ghl:${this.store.tenantId}] OUTBOUND endpoint falló — fallback a INBOUND. Error: ${e.message}`);
       // Fallback: el endpoint outbound no funcionó. Usamos inbound para que
       // el mensaje al menos aparezca en GHL (al costo de notif. en LeadConnector).
-      resp = await ghl.sendInboundMessage(payload);
+      resp = await ghl.sendInboundMessage(basePayload);
     }
   }
 
@@ -767,7 +774,7 @@ export class WhatsAppSession {
     // Mensaje originado fuera de GHL (dashboard) → mirroreamos para que aparezca en GHL Conversations
     const phone = jidToPhone(jid);
     if (phone) {
-      this._pushOperatorToGHL({ jid, phone, text, quotedText: quotedMeta?.text || '' }).catch((e) =>
+      this._pushOperatorToGHL({ jid, phone, text, quotedText: quotedMeta?.text || '', messageId: sent?.key?.id }).catch((e) =>
         console.error(`[ghl:${this._tag}] push manual`, e.message)
       );
     }
@@ -817,7 +824,7 @@ export class WhatsAppSession {
     if (jid.endsWith('@g.us')) return; // grupos local-only
     const phone = jidToPhone(jid);
     if (phone) {
-      this._pushOperatorToGHL({ jid, phone, text: caption || '', attachments: [url], quotedText: quotedMeta?.text || '' }).catch((e) =>
+      this._pushOperatorToGHL({ jid, phone, text: caption || '', attachments: [url], quotedText: quotedMeta?.text || '', messageId: sent?.key?.id }).catch((e) =>
         console.error(`[ghl:${this._tag}] push manual media`, e.message)
       );
     }

@@ -130,13 +130,20 @@ export class GHLClient {
   // Endpoint: POST /conversations/messages/outbound (Add an external outbound
   // message). No dispara el deliveryUrl del Custom Provider — el mensaje ya se
   // envió por fuera, solo se está registrando.
-  async sendOutboundMessage({ contactId, message, conversationProviderId, altId, attachments, type = 'Custom' }) {
+  //
+  // El endpoint exige más campos que el inbound: locationId, phone, y un
+  // messageId externo (el de WhatsApp en nuestro caso) además de
+  // contactId/message/conversationProviderId. Sin ellos GHL devuelve 400.
+  async sendOutboundMessage({ contactId, message, conversationProviderId, locationId, phone, messageId, altId, attachments, type = 'Custom' }) {
     return this._req('POST', '/conversations/messages/outbound', {
       json: {
         type,
         contactId,
         message,
         conversationProviderId,
+        ...(locationId ? { locationId } : {}),
+        ...(phone ? { phone } : {}),
+        ...(messageId ? { messageId } : {}),
         ...(altId ? { altId } : {}),
         ...(attachments && attachments.length ? { attachments } : {}),
       },
