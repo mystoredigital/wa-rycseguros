@@ -710,20 +710,30 @@ export class WhatsAppSession {
     const quoteLine = quotedText ? `↪ "${quotedText.slice(0, 160)}"\n` : '';
     const body = (text || '').trim();
     const message = body ? `${quoteLine}${prefix}${body}` : `${quoteLine}${prefix}`.trim();
-    // Outbound (NO inbound): el mensaje ya salió por Baileys; solo lo
-    // registramos en GHL como saliente nuestro. Así LeadConnector no dispara
-    // la notificación de "nuevo mensaje" para nuestras propias respuestas.
-    const resp = await ghl.sendOutboundMessage({
+    // Intentamos OUTBOUND (no dispara notificación en LeadConnector). Si el
+    // endpoint /conversations/messages/outbound falla (schema, permisos,
+    // disponibilidad), fallback a INBOUND para garantizar que el mensaje
+    // queda registrado en GHL — preferimos "notifica pero aparece" antes que
+    // "no aparece en GHL". El error se loguea con stack para diagnóstico.
+    const payload = {
       contactId,
       message,
       conversationProviderId: providerId,
       attachments,
-    });
-    // Red de seguridad: si GHL llegara a echar el mensaje de vuelta vía el
-    // deliveryUrl del Custom Provider, lo marcamos como "ya visto" para que
-    // /webhooks/ghl/outbound lo descarte y no reenvíe duplicado a WhatsApp.
-    const ghlMessageId = resp?.messageId || resp?.message?.id || resp?.id;
-    if (ghlMessageId) this.markOutboundSent(ghlMessageId);
+    };
+    let resp;
+    try {
+      resp = await ghl.sendOutboundMessage(payload);
+      // Red de seguridad: si GHL eco-disparara el deliveryUrl con este msg,
+      // /webhooks/ghl/outbound lo descarta y no se reenvía duplicado a WA.
+      const ghlMessageId = resp?.messageId || resp?.message?.id || resp?.id;
+      if (ghlMessageId) this.markOutboundSent(ghlMessageId);
+    } catch (e) {
+      console.error(`[ghl:${this.store.tenantId}] OUTBOUND endpoint falló — fallback a INBOUND. Error: ${e.message}`);
+      // Fallback: el endpoint outbound no funcionó. Usamos inbound para que
+      // el mensaje al menos aparezca en GHL (al costo de notif. en LeadConnector).
+      resp = await ghl.sendInboundMessage(payload);
+    }
   }
 
   async send(jid, text, opts = {}) {
