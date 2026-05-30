@@ -379,13 +379,17 @@ export function startServer(port = 3000) {
     verify: (req, _res, buf) => { if (buf?.length) req.rawBody = buf; },
   }));
   app.use(express.urlencoded({ extended: true }));
-  app.use(authMiddleware);
+  // Static ANTES de authMiddleware: los HTMLs y assets (css, js, imágenes,
+  // favicons) deben servirse públicamente porque el navegador los pide para
+  // renderizar login.html antes de tener sesión. Los HTMLs actúan como
+  // shells vacíos — la protección de DATOS está en cada endpoint /api/*.
   app.use(express.static(path.resolve('./public'), {
     setHeaders: (res, p) => {
       // No cachear HTML — los assets sí (cache buster en el query string)
       if (p.endsWith('.html')) res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     },
   }));
+  app.use(authMiddleware);
 
   // Servir /embed sin extensión
   app.get('/embed', (_req, res) => res.sendFile(path.resolve('./public/embed.html')));
@@ -400,7 +404,19 @@ export function startServer(port = 3000) {
   app.post('/api/login', async (req, res) => {
     const { username, password } = req.body || {};
     if (!username || !password) return res.status(400).json({ error: 'username y password requeridos' });
-    const user = await verifyCredentials(username, password);
+
+    // 1) DASHBOARD_USER/PASS del .env como admin perpetuo. Mismo back-door
+    // que Basic auth, pero accesible via UI — así no requiere recordar que
+    // hay dos caminos distintos para autenticarse.
+    let user = null;
+    if (process.env.DASHBOARD_USER && process.env.DASHBOARD_PASS
+        && username === process.env.DASHBOARD_USER
+        && password === process.env.DASHBOARD_PASS) {
+      user = { username, role: 'admin', tenantId: null };
+    } else {
+      // 2) Usuarios formales de data/users.json
+      user = await verifyCredentials(username, password);
+    }
     if (!user) {
       // Pequeño delay para frenar brute-force (no perfecto, pero ayuda).
       await new Promise((r) => setTimeout(r, 300));
