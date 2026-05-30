@@ -588,7 +588,7 @@ export class WhatsAppSession {
         this.store.noteNumberForJid(effectiveJid, this.numberId);
         dispatchWebhook(this.store.tenantId, 'message.sent', {
           jid: effectiveJid, numberId: this.numberId, text: reply,
-          source: 'ai', messageId: sent?.key?.id,
+          source: 'ai', messageId: sent?.key?.id, phone: resolved?.phone || jidToPhone(effectiveJid),
         });
         // Mirror la respuesta de IA a GHL como inbound del lado business
         if (resolved?.phone) {
@@ -753,7 +753,7 @@ export class WhatsAppSession {
     this._touchActivity();
     dispatchWebhook(this.store.tenantId, 'message.sent', {
       jid, numberId: this.numberId, text,
-      source: 'manual', messageId: sent?.key?.id,
+      source: 'manual', messageId: sent?.key?.id, phone: jidToPhone(jid),
     });
     if (opts.skipGhlMirror) return;
     if (jid.endsWith('@g.us')) return; // grupos son local-only, no se mirorean a GHL
@@ -803,7 +803,7 @@ export class WhatsAppSession {
     this._touchActivity();
     dispatchWebhook(this.store.tenantId, 'message.sent', {
       jid, numberId: this.numberId, text: caption || '',
-      source: 'manual-media', messageId: sent?.key?.id,
+      source: 'manual-media', messageId: sent?.key?.id, phone: jidToPhone(jid),
       mediaType: waType, mediaUrl: url,
     });
     if (opts.skipGhlMirror) return;
